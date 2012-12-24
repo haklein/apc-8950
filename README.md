@@ -4,6 +4,8 @@
 ## u-boot (u-boot.bin)
 
      export PATH=$PATH:$arm-toolchain/bin:$uboot/tools
+     cd $arm-toolchain/mybin
+     . ./aliasmybingcc.sh
      cd $uboot
      make wmt_config
      make all
@@ -11,6 +13,8 @@
 ## compressed u-boot (zuboot.bin)
 
      export PATH=$PATH:$arm-toolchain/bin:$uboot/tools
+     cd $arm-toolchain/mybin
+     . ./aliasmybingcc.sh
      cd $uboot
      make wmt_config
      make zuboot
