@@ -44,8 +44,13 @@
  * Next, I should check fbcon or any module who may
  * use fb_set_var, since the root cause must be found.
  *
- * -- WonderMedia */
+ * -- WonderMedia
+ */
+/*
+#ifdef CONFIG_FRAMEBUFFER_CONSOLE
 #define DISABLE_FB_NOTIFIER_CALL_CHAIN
+#endif
+*/
 
     /*
      *  Frame buffer device initialization and setup routines

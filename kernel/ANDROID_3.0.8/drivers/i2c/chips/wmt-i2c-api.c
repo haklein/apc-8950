@@ -34,6 +34,15 @@
 #include <asm/irq.h>
 #include <mach/irqs.h>
 
+/*
+ * Author: Jason
+ * Date: 2012.08.31
+ */ 
+#include "wmt-i2c-api.h"
+
+
+
+
  
 #ifdef __KERNEL__
 
@@ -68,7 +77,6 @@ static int wmt_i2c_api_suspend(struct device *dev, pm_message_t state);
 static int wmt_i2c_api_resume(struct device *dev);
 extern unsigned int wmt_i2c0_is_master;
 extern unsigned int wmt_i2c1_is_master;
-
 
 
 /*----------------------- SPECIFY A MINOR NUMBER -------------------------------
@@ -165,10 +173,71 @@ static unsigned int  wmt_i2c_suspend_flag = 0;
 * RETURNS: 
 * 
 */
+
+/* 
+ * Author: Jason
+ * Date: 2012.08.31
+ * Description: Modify i2c_api_register_write for 1-byte or 2-byte.
+ */ 
+void i2c_api_register_write(u8 slaveAddr, int addrLen, int index, u8 data)
+{	
+	int len = 1;
+	int alen = addrLen;
+	uint chip = slaveAddr;
+	unsigned int length = len + alen;
+	int ret, retry ;
+	struct i2c_msg wr[1];
+	unsigned int i = 0;
+	unsigned char buf[length] ;
+
+	for (i = 0; i < length; ++i) {
+		if (i < alen)
+			*(buf + alen - i - 1) = (unsigned char) ((index >> (i * 8)) & 0xFF);
+		else
+			*(buf + i) = data;
+	}
+	
+	wr[0].addr  = chip ;
+	wr[0].flags = WMT_I2C_W ;
+	wr[0].len   = length ;
+	wr[0].buf   = buf ;
+
+	retry =3;
+	while(retry){
+		//i2c bus 1
+		ret = i2c_transfer((*(i2c_api_client + 1))->adapter, wr, 1);
+		//i2c bus 0
+		//ret = i2c_transfer((*i2c_api_client)->adapter, wr, 1);
+		
+		if (ret != 1) {
+			retry--;
+			DPRINTK("[i2c_api_register_write: retry] %d times left \n", retry);
+		} else
+			retry=0;
+	} 
+		
+	if (ret != 1) {
+		DPRINTK("[i2c_api_register_write] write fail \n");
+		return ;
+	}
+	DPRINTK("[i2c_api_register_write] OK! \n");
+	
+	return ;
+}
+
+/* 
+ * Author: Jason
+ * Date: 2012.08.31
+ * Description: Due to modify i2c_api_register_write for 1-byte or 2-byte,
+ *              so original i2c_api_register_write would masked.
+ */ 
+/*
 void i2c_api_register_write(int index, u8 data)
 {
-	int ret, retry ;
+	//Jason
+	printk("Jason: i2c_api_register_write START.\n");
 	
+	int ret, retry ;
 	unsigned char p_data[2] ;
 	struct i2c_msg wr[1] ;
 
@@ -176,9 +245,9 @@ void i2c_api_register_write(int index, u8 data)
 		DPRINTK("[i2c_api_register_write] i2c_api_client is NULL \n");
 		return ;
 	}
-    
+
 	p_data[0] = (unsigned char)index ;
-	p_data[1] = data ;
+	p_data[1] = data ;	
 
 	wr[0].addr  = (*i2c_api_client)->addr ;
 	wr[0].flags = WMT_I2C_W ;
@@ -200,8 +269,14 @@ void i2c_api_register_write(int index, u8 data)
 		return ;
 	}
 	DPRINTK("[i2c_api_register_write] OK! \n");
+	
+	//Jason
+	printk("Jason: i2c_api_register_write END.\n");
+	
 	return ;
 }
+*/
+
 /*************************************************************************
 * i2c_api_page_write - 
 * 
@@ -399,6 +474,90 @@ int wmt_i2c_xfer_continue_if_4(struct i2c_msg *msg, unsigned int num, int bus_id
 * RETURNS: 
 * 
 */
+
+/* 
+ * Author: Jason
+ * Date: 2012.08.31
+ * Description: Modify i2c_api_register_read for 1-byte or 2-byte.
+ */ 
+int i2c_api_register_read(u8 slaveAddr, int addrLen, int index)
+{	
+	int len = 1;
+	int alen = addrLen;
+	uint chip = slaveAddr;
+	int ret, retry;
+	struct i2c_msg wr[1] ;
+	struct i2c_msg rd[1] ;
+	unsigned char reg_idx[alen];
+	unsigned char p_data[1];
+	unsigned int i = 0;
+
+	p_data[0]    = 0 ;
+
+	for (i = 0; i < alen; ++i) {
+		*(reg_idx + alen - i - 1) = (unsigned char) ((index >> (i * 8)) & 0xFF);
+	}
+
+	wr[0].addr  = chip ;
+	wr[0].flags = WMT_I2C_W ;
+	wr[0].len   = alen ;
+	wr[0].buf   = reg_idx ;
+	
+	retry = 3;
+	while (retry) {
+		
+		//i2c bus 1
+		ret = i2c_transfer((*(i2c_api_client + 1))->adapter, wr, 1);
+		//i2c bus 0
+		//ret = i2c_transfer((*i2c_api_client)->adapter, wr, 1);
+		
+		if (ret != 1) {
+			retry--;
+			DPRINTK("[i2c_api_register_read: retry] %d times left \n", retry);
+		} else
+			retry=0;
+	} 
+	    
+	if (ret != 1) {
+		DPRINTK("[i2c_api_register_read] write fail \n");
+		return 0 ;
+	}
+
+	// step2: read data in 
+	rd[0].addr  = chip ;
+	rd[0].flags = WMT_I2C_R ;
+	rd[0].len   = len ;
+	rd[0].buf   = p_data  ;    
+
+	retry =3;
+	while (retry) {
+		
+		//i2c bus 1
+		ret = i2c_transfer((*(i2c_api_client + 1))->adapter, rd, 1);
+		//i2c bus 0
+		//ret = i2c_transfer((*i2c_api_client)->adapter, rd, 1);
+		
+		if (ret != 1) {
+			retry--;
+			DPRINTK("[i2c_api_register_read: retry] %d times left \n", retry);
+		} else
+			retry=0;
+	} 
+	      
+	if (ret != 1) {
+		DPRINTK("[i2c_api_register_read] read fail \n");
+		return 0 ;
+	}
+
+	return p_data[0];
+}
+/* 
+ * Author: Jason
+ * Date: 2012.08.31
+ * Description: Due to modify i2c_api_register_read for 1-byte or 2-byte,
+ *              so original i2c_api_register_read would masked.
+ */ 
+/*
 int i2c_api_register_read(int index)
 {
 	int ret, retry ;
@@ -413,7 +572,7 @@ int i2c_api_register_read(int index)
 		return 0 ;
 	}
 
-	/* step1: write address out */
+	// step1: write address out
 	reg_index[0] = (unsigned char)index ;
 	p_data[0]    = 0 ;
 
@@ -437,7 +596,7 @@ int i2c_api_register_read(int index)
 		return 0 ;
 	}
 
-	/* step2: read data in */
+	// step2: read data in 
 	rd[0].addr  = (*i2c_api_client)->addr  ;
 	rd[0].flags = WMT_I2C_R ;
 	rd[0].len   = 1 ; 
@@ -461,6 +620,8 @@ int i2c_api_register_read(int index)
 	return p_data[0];    
 
 }
+*/ 
+
 /*************************************************************************
 * i2c_api_page_read - 
 * 
@@ -544,13 +705,21 @@ int wmt_i2c_api_attach(struct i2c_adapter *adap)
 	memset(&info, 0, sizeof(struct i2c_board_info));
         strlcpy(info.type, "wmt_i2c_api", I2C_NAME_SIZE);
         info.addr = WMT_I2C_API_I2C_ADDR;
-	if (adap->nr == 0) {/*i2c 0*/
+	if (adap->nr == 0) {/*i2c 0*/	
 		*i2c_api_client = i2c_new_device(adap, &info);
 		(*i2c_api_client)->dev.driver = &wmt_i2c_api_driver.driver;
 		++wmt_i2c_api_client_count;
 	}
-	if (adap->nr == 1) {/*i2c 1*/
+	if (adap->nr == 1) {/*i2c 1*/	
 		*(i2c_api_client + 1) = i2c_new_device(adap, &info);
+		
+		/*
+		 * Author: Jason
+		 * Date: 2012.08.31
+		 * Description: i2c bus 1 add dev.driver.
+		 */ 
+		(*(i2c_api_client + 1))->dev.driver = &wmt_i2c_api_driver.driver;
+		
 		++wmt_i2c_api_client_count;
 	}
 
@@ -627,7 +796,7 @@ static int wmt_i2c_api_resume(
 		printk("i2c resume\n");
 		wmt_i2c_suspend_flag = 0;
 #ifdef CONFIG_I2C1_WMT
-		if (wmt_i2c1_is_master == 1) {
+		if (wmt_i2c1_is_master == 1) {		
 			auto_pll_divisor(DEV_I2C1, CLK_ENABLE, 0, 0);
 			auto_pll_divisor(DEV_I2C1, SET_DIV, 2, 20);/*20M Hz*/
 			GPIO_CTRL_GP21_I2C_BYTE_VAL &= ~(BIT2 | BIT3);
@@ -667,6 +836,7 @@ static int wmt_i2c_api_resume(
 		}
 #endif
 	}
+
 	return 0;
 } /* End of wmt_i2c_api_resume() */
 
@@ -706,6 +876,7 @@ void wmt_i2c_api_exit(void)
 	wmt_i2c_api_i2c_initialized --;	
 }
 
+
 /*************************************************************************
 * wmt_i2c_api_i2c_init - 
 * 
@@ -713,10 +884,15 @@ void wmt_i2c_api_exit(void)
 * 
 */
 static int __init  wmt_i2c_api_i2c_init(void)
-{	
+{		
+	
 	printk("[wmt_i2c_api_i2c_init]\n");
 	wmt_i2c_api_init() ;
-	return 0 ;	
+	
+	return 0 ;
+	
+	
+	
 }
 
 /*************************************************************************

@@ -53,7 +53,6 @@
 
 #define VPP_PROC_NUM		10
 #define VPP_DISP_FB_MAX		10
-#define VPP_DISP_FB_NUM		4
 
 typedef struct {
 	int (*func)(void *arg);
@@ -125,6 +124,7 @@ typedef struct {
 vpp_netlink_proc_t vpp_netlink_proc[VPP_NETLINK_PROC_MAX];
 
 static struct sock *vpp_nlfd;
+int vpp_mv_debug,vpp_mv_buf = 2;
 
 /* netlink receive routine */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
@@ -167,9 +167,9 @@ static void vpp_netlink_receive(struct sk_buff *skb)
 		if((nlh->nlmsg_len >= sizeof(struct nlmsghdr))
 			&& (skb->len >= nlh->nlmsg_len)){
 			if((proc = vpp_netlink_get_proc(nlh->nlmsg_type))){
-				write_lock_bh(proc->lock);
+				write_lock_bh(&proc->lock);
 				proc->pid =nlh->nlmsg_pid;
-				write_unlock_bh(proc->lock);
+				write_unlock_bh(&proc->lock);
 				DPRINT("[VPP] rx user pid 0x%x\n",proc->pid);
 			}
 		}
@@ -351,11 +351,77 @@ void vpp_dbg_wait(char *str)
 	vpp_dbg_wait_flag = 0;
 	DPRINT("[VPP] Exit vpp_dbg_wait\n");
 }
+
+int vpp_dbg_get_period_usec(vpp_dbg_period_t *p,int cmd)
+{
+	static struct timeval pre_tv;
+	struct timeval tv;
+	unsigned int tm_usec = 0;
+
+	do_gettimeofday(&tv);
+	if( pre_tv.tv_sec ){
+		tm_usec = ( tv.tv_sec == pre_tv.tv_sec )? (tv.tv_usec - pre_tv.tv_usec):(1000000 + tv.tv_usec - pre_tv.tv_usec);
+	}
+	pre_tv = tv;
+	if( p ){
+		if( cmd == 0 ){
+			p->index = 0;
+			memset(&p->period_us,0,VPP_DBG_PERIOD_NUM);
+		}
+		else {
+			p->period_us[p->index] = tm_usec;
+		}
+		p->index++;
+		if( cmd == 2 ){
+			int i,sum = 0;
+			
+			DPRINT("[VPP] period");
+			for(i=0;i<VPP_DBG_PERIOD_NUM;i++){
+				DPRINT(" %d",p->period_us[i]);
+				sum += p->period_us[i];
+			}
+			DPRINT(",sum %d\n",sum);
+		}
+	}
+	return tm_usec;
+}
 #else
 void vpp_dbg_show(int level,int tmr,char *str){}
 static void vpp_dbg_show_val1(int level,int tmr,char *str,int val){}
 void vpp_dbg_wait(char *str){}
 #endif
+
+static void load_regs( struct pt_regs *ptr )
+{
+	asm volatile(
+	"stmia %0, {r0 - r15}\n\t"
+	:
+	: "r" (ptr)
+	: "memory"
+	);
+}
+
+void vpp_dbg_back_trace( void )
+{
+	struct pt_regs *ptr;
+	unsigned int fp;
+	unsigned long flags;
+
+	ptr = kmalloc( sizeof( struct pt_regs ), GFP_KERNEL);
+
+	local_irq_save(flags);
+
+	printk("\n\nstart back trace...\n");
+	load_regs( ptr );
+	fp = ptr->ARM_fp;
+	c_backtrace(fp, 0x1f);
+	printk("back trace end...\n\n");
+
+	local_irq_restore(flags);
+
+	kfree ( ptr );
+}
+EXPORT_SYMBOL(vpp_dbg_back_trace);
 
 /*----------------------- Linux Kernel feature --------------------------------------*/
 #ifdef CONFIG_PROC_FS
@@ -428,6 +494,12 @@ static int vpp_do_proc(ctl_table * ctl,int write,struct file *file,void *buffer,
 				break;
 			case 23:
 				vpp_proc_value = g_vpp.dbg_flag;
+				break;
+			case 24:
+				vpp_proc_value = g_vpp.hdmi_3d_type;
+				break;
+			case 25:
+				vpp_proc_value = g_vpp.hdmi_certify_flag;
 				break;
 			default:
 				break;
@@ -558,6 +630,28 @@ static int vpp_do_proc(ctl_table * ctl,int write,struct file *file,void *buffer,
 				break;
 			case 23:
 				g_vpp.dbg_flag = vpp_proc_value;
+				break;
+			case 24:
+				g_vpp.hdmi_3d_type = vpp_proc_value;
+#ifdef CONFIG_WMT_HDMI
+				hdmi_tx_vendor_specific_infoframe_packet();
+#endif
+				break;
+			case 25:
+				g_vpp.hdmi_certify_flag = vpp_proc_value;
+				break;
+			case 27:
+#ifdef CONFIG_VPP_MOTION_VECTOR
+				DPRINT("---------- MV duplicate ----------\n");
+				DPRINT("0-no dup\n");
+				DPRINT("1-top + bottom\n");
+				DPRINT("2-top dup\n");
+				DPRINT("3-bottom dup\n");
+				DPRINT("4-test pattern\n");
+				DPRINT("5-top & bottom\n");
+				DPRINT("6-top | bottom\n");
+				DPRINT("-------------------------------------\n");
+#endif
 				break;
 			default:
 				break;
@@ -754,6 +848,38 @@ static int vpp_do_proc(ctl_table * ctl,int write,struct file *file,void *buffer,
 			.proc_handler = &vpp_do_proc,
 		},
 		{
+//			.ctl_name 	= 24,
+			.procname	= "hdmi_3d",
+			.data		= &vpp_proc_value,
+			.maxlen		= sizeof(int),
+			.mode		= 0666,
+			.proc_handler = &vpp_do_proc,
+		},
+		{
+//			.ctl_name 	= 25,
+			.procname	= "hdmi_certify",
+			.data		= &vpp_proc_value,
+			.maxlen		= sizeof(int),
+			.mode		= 0666,
+			.proc_handler = &vpp_do_proc,
+		},
+		{
+//			.ctl_name 	= 26
+			.procname	= "mv_dbg",
+			.data		= &vpp_mv_debug,
+			.maxlen		= sizeof(int),
+			.mode		= 0666,
+			.proc_handler = &vpp_do_proc,
+		},
+		{
+//			.ctl_name 	= 27
+			.procname	= "mv_buf",
+			.data		= &vpp_mv_buf,
+			.maxlen		= sizeof(int),
+			.mode		= 0666,
+			.proc_handler = &vpp_do_proc,
+		},
+		{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 		.ctl_name = 0
 #endif
@@ -887,7 +1013,7 @@ static int vpp_sts_read_proc(char *buf, char **start, off_t offset, int len)
 	do_gettimeofday(&tv);
 	tm_usec=(tv.tv_sec==pre_tv.tv_sec)? (tv.tv_usec-pre_tv.tv_usec):(1000000*(tv.tv_sec-pre_tv.tv_sec)+tv.tv_usec-pre_tv.tv_usec);
 	p += sprintf(p, "Time period %d usec\n",(int) tm_usec);
-	p += sprintf(p, "GOVR fps %d,GOVR2 fps %d\n",(1000000*g_vpp.govrh_vbis_cnt/tm_usec),(1000000*g_vpp.govrh2_vbis_cnt/tm_usec));
+	p += sprintf(p, "GOVR fps %d,GOVR2 fps %d\n",(1000000*p_govrh->vbis_cnt/tm_usec),(1000000*p_govrh2->vbis_cnt/tm_usec));
 	p += sprintf(p, "GOVW fps %d\n",(1000000*g_vpp.govw_vbis_cnt/tm_usec));
 	pre_tv = tv;
 	
@@ -903,8 +1029,6 @@ static int vpp_sts_read_proc(char *buf, char **start, off_t offset, int len)
 #ifdef CONFIG_HW_VPU_HALT_GOVW_TG_ERR
 	p += sprintf(p, "GOVW TG err cnt %d,step %d\n",vpp_govw_tg_err_parm_cnt,vpp_govw_tg_err_parm);
 #endif
-	g_vpp.govrh_vbis_cnt = 0;
-	g_vpp.govrh2_vbis_cnt = 0;
 	g_vpp.govw_vbis_cnt = 0;
 	g_vpp.govw_pvbi_cnt = 0;
 	g_vpp.disp_fb_isr_cnt = 0;
@@ -918,6 +1042,8 @@ static int vpp_sts_read_proc(char *buf, char **start, off_t offset, int len)
 	g_vpp.vpu_c_err_cnt = 0;
 	p_govrh->underrun_cnt = 0;
 	p_govrh2->underrun_cnt = 0;
+	p_govrh->vbis_cnt = 0;
+	p_govrh2->vbis_cnt = 0;
 
 #ifdef CONFIG_SCL_DIRECT_PATH_DEBUG
 	p += sprintf(p, "--- scl fb ---\n");
@@ -1012,6 +1138,9 @@ static int vpp_info_read_proc(char *buf,char **start,off_t offset,int len)
 #ifdef WMT_FTBLK_GOVRH
 	p += sprintf(p, "========== GOVRH ==========\n");
 	p = vpp_show_module(VPP_MOD_GOVRH,p);
+
+	p += sprintf(p, "========== GOVRH2 ==========\n");
+	p = vpp_show_module(VPP_MOD_GOVRH2,p);
 #endif
 
 	p += sprintf(p, "========== GOVW ==========\n");
@@ -1193,6 +1322,217 @@ void vpp_dei_dynamic_detect(void)
 		dei_cnt--;
 	}
 #endif
+}
+
+#ifdef CONFIG_VPP_MOTION_VECTOR
+void vpp_dei_mv_duplicate(vdo_framebuf_t *fb)
+{
+	unsigned int phy,vir;
+	int mv_h;
+
+	phy = fb->c_addr+(fb->c_addr - fb->y_addr)/2;
+	vir = (unsigned int) mb_phys_to_virt((unsigned long)phy);
+	mv_h = fb->img_h / 16;
+
+#if 0	// convert MV byte to bit
+{
+	int i,j,k,mv_w;
+	char *s,*d;
+
+	mv_w = fb->img_w / 16;
+	vpp_reg_dump(vir,mv_w*10);
+	for(i=0;i<mv_h;i++){
+		for(j=0;j<mv_w;j++){
+			s = vir + mv_w * i + j;
+			d = vir + VPU_MV_BUF_LEN * i + (j / 8);
+			k = j % 8;
+			if( k == 0 ) *d = 0;
+			*d |= (*s != 0 )? (0x1 << k):0x0;
+		}
+	}
+	//vpp_reg_dump(vir,mv_w);	
+}
+#endif
+	
+	switch( vpp_mv_buf ){
+		case 0:
+		default:
+			break;
+		case 1:	// top + bottom
+			{
+				unsigned int vir_tmp;
+				int i;
+				int size;
+
+				size = VPU_MV_BUF_LEN * mv_h;
+				vir_tmp = vir + size;
+				memcpy((void *)vir_tmp,(void *)vir,size);
+				for(i=0;i<(mv_h/2);i++){
+					memcpy((void *)vir+VPU_MV_BUF_LEN*(2*i),(void *)vir_tmp+VPU_MV_BUF_LEN*i,VPU_MV_BUF_LEN);
+					memcpy((void *)vir+VPU_MV_BUF_LEN*(2*i+1),(void *)vir_tmp+VPU_MV_BUF_LEN*i+(size/2),VPU_MV_BUF_LEN);
+				}
+			}
+			break;
+		case 2:	// duplicate top
+			{
+				int i;
+
+				for(i=(mv_h/2)-1;i>=0;i--){
+					memcpy((void *)vir+VPU_MV_BUF_LEN*(2*i),(void *)vir+VPU_MV_BUF_LEN*i,VPU_MV_BUF_LEN);
+					memcpy((void *)vir+VPU_MV_BUF_LEN*(2*i+1),(void *)vir+VPU_MV_BUF_LEN*i,VPU_MV_BUF_LEN);
+				}
+			}
+			break;
+		case 3:	// duplicate bottom
+			{
+				unsigned int vir_tmp;
+				int i;
+				int size;
+
+				size = VPU_MV_BUF_LEN * (fb->img_h/16);
+				vir_tmp = vir + size;
+				memcpy((void *)vir_tmp,(void *)vir,size);
+				for(i=0;i<(mv_h/2);i++){
+					memcpy((void *)vir+VPU_MV_BUF_LEN*(2*i),(void *)vir_tmp+VPU_MV_BUF_LEN*i+(size/2),VPU_MV_BUF_LEN);
+					memcpy((void *)vir+VPU_MV_BUF_LEN*(2*i+1),(void *)vir_tmp+VPU_MV_BUF_LEN*i+(size/2),VPU_MV_BUF_LEN);
+				}
+			}
+			break;
+		case 4:	// debug pattern
+			{
+				int i,value;
+
+				for(i=0;i<mv_h;i++){
+					switch(i%3){
+						case 0:
+							value = 0xff;
+							break;
+						case 1:
+							value = 0x55;
+							break;
+						case 2:
+							value = 0xaa;
+							break;
+					}
+					memset((void *)vir+VPU_MV_BUF_LEN*i,value,VPU_MV_BUF_LEN);
+				}
+			}
+			break;
+		case 5:	// top & bottom
+			{
+				unsigned int vir_tmp;
+				int i,j,value;
+				int size;
+				char *p;
+
+				size = VPU_MV_BUF_LEN * mv_h;
+				vir_tmp = vir + size;
+				memcpy((void *)vir_tmp,(void *)vir,size);
+				// vpp_reg_dump(vir,size);
+				for(i=0;i<(mv_h/2);i++){
+					for(j=0;j<VPU_MV_BUF_LEN;j++){
+						p = (char *)(vir_tmp + VPU_MV_BUF_LEN * i + j);
+						value = *p & *(p+size/2);
+						p = (char *)(vir + VPU_MV_BUF_LEN * 2 * i + j);
+						*p = value;
+						*(p+VPU_MV_BUF_LEN) = value;
+					}
+				}
+				// vpp_reg_dump(vir,size);		
+			}
+			break;
+		case 6:	// top | bottom
+			{
+				unsigned int vir_tmp;
+				int i,j,value;
+				int size;
+				char *p;
+
+				size = VPU_MV_BUF_LEN * mv_h;
+				vir_tmp = vir + size;
+				memcpy((void *)vir_tmp,(void *)vir,size);
+				// vpp_reg_dump(vir,size);
+				for(i=0;i<(mv_h/2);i++){
+					for(j=0;j<VPU_MV_BUF_LEN;j++){
+						p = (char *)(vir_tmp + VPU_MV_BUF_LEN * i + j);
+						value = *p | *(p+size/2);
+						p = (char *)(vir + VPU_MV_BUF_LEN * 2 * i + j);
+						*p = value;
+						*(p+VPU_MV_BUF_LEN) = value;
+					}
+				}
+				// vpp_reg_dump(vir,size);		
+			}
+			break;
+	}
+
+#if 0
+	{ // MV block always static for TV logo text
+		char *p;
+
+		p = vir + 6 * VPU_MV_BUF_LEN + 4;
+		*p &= ~0x60;
+	}
+#endif
+}
+
+void vpp_dei_mv_analysis(vdo_framebuf_t *s,vdo_framebuf_t *d)
+{
+	char *mv_p;	
+	int d_vir;
+	int i,j,k;
+
+	mv_p = mb_phys_to_virt(vppif_reg32_in(REG_MVR_YSA));
+	d_vir = (int) mb_phys_to_virt(d->c_addr);
+	for(i=0;i<(d->img_h/16);i++){
+		for(j=0;j<(d->img_w/16);j++){
+			k = j % 8;
+			if( (mv_p[VPU_MV_BUF_LEN*i+j/8] & (0x1 << k)) == 0 ){
+				char *c_p;
+				int line;
+
+				c_p = (char *)(d_vir + (i * 8 * d->fb_w) + (j * 16));
+				for(line=0;line<8;line++){
+					memset(c_p,0x00,16);
+					c_p += d->fb_w;
+				}
+			}
+		}
+	}
+}
+#endif
+
+void vpp_set_NA12_hiprio(int hi)
+{
+	static int reg1,reg2;
+//	static int reg3,reg4;
+
+	if( hi ){
+		// set NA12 to high priority
+		reg1 = vppif_reg32_in(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x8);
+		reg2 = vppif_reg32_in(MEMORY_CTRL_V4_CFG_BASE_ADDR+0xC);
+#if 1
+		vppif_reg32_out(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x8,0x600000);
+		vppif_reg32_out(MEMORY_CTRL_V4_CFG_BASE_ADDR+0xC,0x0ff00000);
+#else
+		reg3 = vppif_reg32_in(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x18);
+		reg4 = vppif_reg32_in(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x1C);
+
+		vppif_reg32_write(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x8,0x200000,21,1);
+		vppif_reg32_write(MEMORY_CTRL_V4_CFG_BASE_ADDR+0xC,0x00f00000,20,0xf);
+//		vppif_reg32_write(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x18,0x200000,21,1);
+		vppif_reg32_write(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x1C,0x00f00000,20,0xf);
+#endif
+	}
+	else {
+		// restore NA12 priority
+		vppif_reg32_out(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x8,reg1);
+		vppif_reg32_out(MEMORY_CTRL_V4_CFG_BASE_ADDR+0xC,reg2);
+#if 0
+		vppif_reg32_out(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x18,reg3);
+		vppif_reg32_out(MEMORY_CTRL_V4_CFG_BASE_ADDR+0x1C,reg4);
+#endif
+	}
 }
 
 void vpp_fb_pool_init(vpp_fb_pool_t *pool,int size,int num)
@@ -2206,6 +2546,7 @@ int vpp_mb_put(unsigned int phy)
 
 	if( phy == 0 ){
 		g_vpp.stream_mb_lock = 0;
+		g_vpp.stream_mb_index = 0;
 		return 0;
 	}
 
@@ -2226,6 +2567,18 @@ int vpp_mb_put(unsigned int phy)
 	return 0;
 }
 
+void vpp_mb_sync(int govr_mode,int cnt)
+{
+	if( g_vpp.stream_enable == 0 )
+		return;
+
+	if( vout_info[0].govr_mod != govr_mode )
+		return;
+	
+	if( (cnt % 2) == 0 ){
+		g_vpp.stream_mb_sync_flag = 0;
+	}
+}
 #endif
 
 void vpp_govw_int_routine(void)
@@ -2291,14 +2644,7 @@ void vpp_govw_int_routine(void)
 		if( i >= g_vpp.mb_govw_cnt ){
 			i = 0;
 		}
-#ifdef CONFIG_VPP_STREAM_CAPTURE
-		if( g_vpp.stream_enable ){
-			if( g_vpp.stream_mb_lock & (0x1 << i) ){
-				continue;
-			}
-		}
 		break;
-#endif
 	} while(1);
 	new_y = g_vpp.mb_govw[i];
 	new_c = new_y + g_vpp.mb_govw_y_size;
@@ -2315,9 +2661,6 @@ void vpp_govw_int_routine(void)
 		p_govw->fb_p->fb.c_addr = new_c;
 	}
 	memcpy(&g_vpp.disp_pts,&g_vpp.govw_pts,sizeof(vpp_pts_t));
-#ifdef CONFIG_VPP_STREAM_CAPTURE	
-	g_vpp.stream_mb_sync_flag = 0;
-#endif
 } /* End of vpp_govw_int_routine */
 
 int vpp_irqproc_get_no(vpp_int_t vpp_int)
@@ -2450,9 +2793,12 @@ int vpp_irqproc_work
 	}
 	vpp_unlock();
 	if( wait ) {
-		ret = down_timeout(&entry->sem,HZ);
+		unsigned int tmr_cnt;
+
+		tmr_cnt = (wait == 1)? HZ:((wait*HZ)/1000);
+		ret = down_timeout(&entry->sem,tmr_cnt);
 		if( ret ){
-			DPRINT("[VPP] *W* vpp_irqproc_work timeout(type 0x%x)\n",type);
+			DPRINT("[VPP] *W* vpp_irqproc_work timeout(type 0x%x,%d)\n",type,wait);
 			list_del_init(ptr);
 			list_add_tail(ptr,&vpp_free_list);
 			if( func ) func(arg);
@@ -2486,15 +2832,21 @@ int vpp_irqproc_chg_path(int arg)
 void vpp_irqproc_govrh_vbis(int arg)
 {
 	if( arg == 0 ){
-		g_vpp.govrh_vbis_cnt++;
+		p_govrh->vbis_cnt++;
 		vout_plug_detect(VPP_VOUT_NUM_HDMI);
+#ifdef CONFIG_VPP_STREAM_CAPTURE
+		vpp_mb_sync(VPP_MOD_GOVRH,p_govrh->vbis_cnt);
+#endif
 	}
 }
 
 void vpp_irqproc_govrh2_vbis(int arg)
 {
 	if( arg == 0 ){
-		g_vpp.govrh2_vbis_cnt++;
+		p_govrh2->vbis_cnt++;
+#ifdef CONFIG_VPP_STREAM_CAPTURE
+		vpp_mb_sync(VPP_MOD_GOVRH2,p_govrh2->vbis_cnt);
+#endif		
 	}
 }
 
@@ -2523,6 +2875,9 @@ void vpp_irqproc_govrh_pvbi(int arg)
 		}
 #endif
 
+		if( g_vpp.govr != p_govrh )
+			return;
+
 		ret = vpp_disp_fb_isr(VPP_FB_PATH_GOVR);
 		if( !g_vpp.vpp_path_no_ready ){
 			switch( g_vpp.vpp_path ){
@@ -2536,6 +2891,31 @@ void vpp_irqproc_govrh_pvbi(int arg)
 					vpp_scl_fb_isr();
 					break;
 #endif
+				case VPP_VPATH_GOVR:
+				case VPP_VPATH_VPU:
+					if( ret ){
+						g_vpp.disp_fb_cnt--;
+						g_vpp.disp_cnt++;
+					}
+					break;
+				default:
+					break;
+			}
+		}
+	}
+}
+
+void vpp_irqproc_govrh2_pvbi(int arg)
+{
+	int ret;
+
+	if( arg == 0 ){
+		if( g_vpp.govr != p_govrh2 )
+			return;
+		
+		ret = vpp_disp_fb_isr(VPP_FB_PATH_GOVR);
+		if( !g_vpp.vpp_path_no_ready ){
+			switch( g_vpp.vpp_path ){
 				case VPP_VPATH_GOVR:
 				case VPP_VPATH_VPU:
 					if( ret ){
@@ -2927,12 +3307,16 @@ void vpp_set_path(int arg,vdo_framebuf_t *fb)
 		case VPP_VPATH_GE:		// GE fb -> pan display -> GOVR fb -> GOVR
 			break;
 		case VPP_VPATH_VPU:		// VPU fb -> Queue -> VPU -> GOVR
+			govr = p_govrh2;
+#ifdef CONFIG_VPU_DIRECT_PATH
 			vpu_set_direct_path(arg);
 			govrh_set_direct_path(govr,VPP_FLAG_DISABLE);
-			govw_set_tg_enable(VPP_FLAG_ENABLE);
+			// govw_set_tg_enable(VPP_FLAG_ENABLE);
 			govrh_set_MIF_enable(govr,VPP_FLAG_ENABLE);
-			vpp_set_vppm_int_enable(VPP_INT_GOVRH_PVBI+VPP_INT_GOVRH_VBIS+VPP_INT_GOVRH2_VBIS,0);
+			vpp_set_vppm_int_enable(VPP_INT_GOVRH_PVBI+VPP_INT_GOVRH_VBIS,0);
+			vpp_set_vppm_int_enable(VPP_INT_GOVRH2_PVBI+VPP_INT_GOVRH2_VBIS,0);
 			vppm_set_NA_mode(0);
+#endif
 			break;
 		default:
 			break;
@@ -2963,24 +3347,21 @@ void vpp_set_path(int arg,vdo_framebuf_t *fb)
 			}
 			break;
 		case VPP_VPATH_VPU:
+#ifdef CONFIG_VPU_DIRECT_PATH
 			if( govr != p_govrh2 ){
 				DBG_ERR("VPU dirpath only govrh2\n");
+				govr = p_govrh2;
 			}
 #ifdef CONFIG_VPP_GOVRH_FBSYNC
 			vpp_fbsync_cal_fps();
 #endif
 			vpu_set_direct_path(VPP_VPATH_VPU);
 			govrh_set_direct_path(govr,VPP_FLAG_ENABLE);
-			vpp_wait_vsync(0,3);
-			govw_set_tg_enable(VPP_FLAG_DISABLE);
 			govrh_set_MIF_enable(govr,VPP_FLAG_DISABLE);
 			vppm_set_NA_mode(1);
-			vpp_set_vppm_int_enable(VPP_INT_GOVRH_PVBI+VPP_INT_GOVRH_VBIS+VPP_INT_GOVRH2_VBIS,1);
-			{
-			unsigned int fb_w,img_w,offx,offy;
-			govrh_get_fb_info(p_govrh2,&fb_w,&img_w,&offx,&offy);
-			vppif_reg32_write(VPU_DST_VXWIDTH,img_w);
-			}
+			vpp_set_vppm_int_enable(VPP_INT_GOVRH_PVBI+VPP_INT_GOVRH_VBIS,1);
+			vpp_set_vppm_int_enable(VPP_INT_GOVRH2_PVBI+VPP_INT_GOVRH2_VBIS,1);
+#endif
 			break;
 #ifdef CONFIG_GOVW_SCL_PATH
 		case VPP_VPATH_GOVW_SCL:
@@ -3034,6 +3415,14 @@ void vpp_set_path(int arg,vdo_framebuf_t *fb)
 	vpp_mod_set_clock(VPP_MOD_VPU,VPP_FLAG_DISABLE,1);
 }
 
+void vpp_free_framebuffer(void)
+{
+	vpp_lock();
+	mb_free(g_vpp.mb[0]);
+	g_vpp.mb[0] = 0;
+	vpp_unlock();
+}
+
 int vpp_alloc_framebuffer(unsigned int resx,unsigned int resy)
 {
 	vdo_framebuf_t *fb;
@@ -3068,12 +3457,11 @@ int vpp_alloc_framebuffer(unsigned int resx,unsigned int resy)
 		else {
 			mb_resx = VPP_HD_MAX_RESX;
 			mb_resy = VPP_HD_MAX_RESY;
-			colfmt = VPP_UBOOT_COLFMT;
-//			colfmt = VPP_GOVW_FB_COLFMT;
+			colfmt = g_vpp.mb_colfmt;
 			vpp_get_colfmt_bpp(colfmt,&y_bpp,&c_bpp);
 			fb_num = VPP_MB_ALLOC_NUM;
 		}
-		mb_resx = vpp_calc_align(mb_resx,VPP_FB_WIDTH_ALIGN/(y_bpp/8));
+		mb_resx = vpp_calc_align(mb_resx,VPP_FB_ADDR_ALIGN/(y_bpp/8));
 		y_size = mb_resx * mb_resy * y_bpp / 8;
 		fb_size = mb_resx * mb_resy * (y_bpp+c_bpp) / 8;
 		g_vpp.mb_fb_size = fb_size;
@@ -3099,7 +3487,7 @@ int vpp_alloc_framebuffer(unsigned int resx,unsigned int resy)
 		vpp_get_colfmt_bpp(colfmt,&y_bpp,&c_bpp);
 		resx_fb = vpp_calc_fb_width(colfmt,resx);
 		y_size = resx_fb * resy * y_bpp / 8;
-		fb_size = resx_fb * resy * (y_bpp+c_bpp)/ 8; 
+		fb_size = vpp_calc_align(resx_fb,64) * resy * (y_bpp+c_bpp)/ 8; 
 		g_vpp.mb_govw_y_size = y_size;
 		g_vpp.mb_govw_cnt = VPP_GOV_MB_ALLOC_NUM;
 		for(i=0;i<VPP_GOV_MB_ALLOC_NUM;i++){
@@ -3155,171 +3543,18 @@ int vpp_alloc_framebuffer(unsigned int resx,unsigned int resy)
 	return 0;
 } /* End of vpp_alloc_framebuffer */
 
-void vpp_get_sys_parameter(void)
-{
-	unsigned char buf[40];
-	int varlen = 40;
-
-	// vpp attribute by default
-	g_vpp.disp_fb_max = VPP_DISP_FB_NUM;
-	g_vpp.disp_fb_cnt = 0;
-	g_vpp.video_quality_mode = 1;
-	g_vpp.scale_keep_ratio = 1;
-	g_vpp.disp_fb_keep = 0;
-#ifdef CONFIG_VPP_GOVRH_FBSYNC
-	g_vpp.fbsync_enable = 1;
-#endif
-	g_vpp.hdmi_audio_interface = VPP_HDMI_AUDIO_SPDIF;
-	g_vpp.hdmi_cp_enable = 1;
-	g_vpp.govw_vfp = 5;
-	g_vpp.govw_vbp = 5;
-	g_vpp.vpp_path = VPP_VPATH_GE;
-	g_vpp.vpu_path = VPP_VPATH_GOVW;
-#ifdef CONFIG_VPP_GE_DIRECT_PATH
-	g_vpp.ge_path = VPP_VPATH_GE;
-#else
-	g_vpp.ge_path = VPP_VPATH_GOVW;
-#endif
-#ifdef WMT_FTBLK_GOVRH
-	g_vpp.govr = p_govrh2;
-#endif
-
-#if 0
-	if( wmt_getsyspara("wmt.display.direct_path",buf,&varlen) == 0 ){
-		sscanf(buf,"%d",&g_vpp.direct_path);
-		DPRINT("[VPP] direct path %d\n",g_vpp.direct_path);
-	}
-#endif
-
-	if( wmt_getsyspara("wmt.display.hdmi_audio_inf",buf,&varlen) == 0 ){
-		if( memcmp(buf,"i2s",3) == 0 ){
-//			DPRINT("[VPP] hdmi audio i2s\n");
-			g_vpp.hdmi_audio_interface = VPP_HDMI_AUDIO_I2S;
-		}
-		else if( memcmp(buf,"spdif",5) == 0 ){
-//			DPRINT("[VPP] hdmi audio spdif\n");
-			g_vpp.hdmi_audio_interface = VPP_HDMI_AUDIO_SPDIF;
-		}	
-	}
-
-	if( wmt_getsyspara("wmt.display.hdmi.vmode",buf,&varlen) == 0 ){
-		if( memcmp(buf,"720p",4) == 0 ){
-			g_vpp.hdmi_video_mode = 720;
-		}
-		else if( memcmp(buf,"1080p",5) == 0 ){
-			g_vpp.hdmi_video_mode = 1080;
-		}
-		else {
-			g_vpp.hdmi_video_mode = 0;
-		}
-		DPRINT("[VPP] HDMI video mode %d\n",g_vpp.hdmi_video_mode);
-	}
-
-#ifdef CONFIG_GOVW_SCL_PATH
-	if( wmt_getsyspara("wmt.display.path",(unsigned char *)buf,&varlen) == 0){
-		unsigned int arg[4];
-
-		vpp_parse_param(buf,arg,4,0);
-		g_vpp.ge_path = arg[0];
-		g_vpp.vpu_path = arg[1];
-		p_govw->fb_p->fb.img_w = arg[2];
-		p_govw->fb_p->fb.img_h = arg[3];
-		p_govw->fb_p->fb.fb_w = vpp_calc_align(p_govw->fb_p->fb.img_w,VPP_FB_WIDTH_ALIGN);
-		p_govw->fb_p->fb.fb_h = p_govw->fb_p->fb.img_h;
-		g_vpp.vpp_path = g_vpp.ge_path;
-		DPRINT("[VPP] path GE(%s),VPU(%s),res(%dx%d)\n",vpp_vpath_str[arg[0]],vpp_vpath_str[arg[1]],arg[2],arg[3]);
-	}
-#endif
-} /* End of vpp_get_sys_parameter */
-
 /*----------------------- Linux Kernel interface --------------------------------------*/
-//#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-#if 0
-static int __devinit vpp_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
-{
-	int ret = 0;
-
-	DBG_DETAIL();
-	
-//	i2c_set_clientdata(i2c, vt1602);
-
-	return ret;
-}
-
-static int __devexit vpp_i2c_remove(struct i2c_client *client)
-{
-	DBG_DETAIL();
-	
-//	kfree(i2c_get_clientdata(client));
-	return 0;
-}
-
-static const struct i2c_device_id vpp_i2c_id[] = {
-	{ "vpp", 1},
-	{ }
-};
-MODULE_DEVICE_TABLE(i2c, vpp_i2c_id);
-
-/* corgi i2c codec control layer */
-static struct i2c_driver vpp_i2c_driver = {
-	.driver = {
-		.name = "vpp",
-		.owner = THIS_MODULE,
-	},
-	.probe =    vpp_i2c_probe,
-	.remove =   __devexit_p(vpp_i2c_remove),
-	.id_table = vpp_i2c_id,
-};
-
-static struct i2c_board_info __initdata wmt_vpp_board_info[] = {
-	{
-			I2C_BOARD_INFO("vpp", 0x1a),
-	},
-};		
-
-int vpp_i2c_init(void)
-{
-	/*i2c_register_board_info(1, wmt_vt1602_board_info,
-				ARRAY_SIZE(wmt_vt1602_board_info));*/
-
-	adapter = i2c_get_adapter(1);
-	if (adapter == NULL) {
-		err("can not get i2c adapter, client address error");
-		return -ENODEV;
-	}
-	
-	if (i2c_new_device(adapter, wmt_vpp_board_info) == NULL) {
-		err("allocate i2c client failed");
-		return -ENOMEM;
-	}
-	
-	i2c_put_adapter(adapter);
-
-	ret = i2c_add_driver(&vpp_i2c_driver);
-	if (ret) {
-		info("i2c_add_driver fail");
-	}
-	return ret;
-}
-#endif
-
 int vpp_dev_init(void)
 {
 	int i;
-
-	// vpp attribute by uboot parameter
-	vpp_get_sys_parameter();
 
 	g_vpp.alloc_framebuf = vpp_alloc_framebuffer;
 
 	// init module
 //	p_scl->int_catch = VPP_INT_ERR_SCL_TG | VPP_INT_ERR_SCLR1_MIF | VPP_INT_ERR_SCLR2_MIF 
 //						| VPP_INT_ERR_SCLW_MIFRGB | VPP_INT_ERR_SCLW_MIFY |	VPP_INT_ERR_SCLW_MIFC;
-	p_vppm->int_catch = VPP_INT_GOVW_PVBI | VPP_INT_GOVW_VBIS | VPP_INT_GOVW_VBIE;
-	if( g_vpp.vpp_path ){
-	    p_vppm->int_catch |= (VPP_INT_GOVRH_PVBI+VPP_INT_GOVRH_VBIS+VPP_INT_GOVRH2_VBIS);
-	}
+	p_vppm->int_catch = VPP_INT_GOVW_PVBI | VPP_INT_GOVW_VBIS | VPP_INT_GOVW_VBIE 
+						| VPP_INT_GOVRH_PVBI | VPP_INT_GOVRH_VBIS | VPP_INT_GOVRH2_VBIS;
 
 #ifdef CONFIG_VPP_GOVW_TG_ERR_DROP_FRAME			
 	p_govw->int_catch = VPP_INT_ERR_GOVW_TG; // | VPP_INT_ERR_GOVW_MIFY | VPP_INT_ERR_GOVW_MIFC;
@@ -3344,6 +3579,7 @@ int vpp_dev_init(void)
 #ifdef WMT_FTBLK_GOVRH
 	vpp_irqproc_new(VPP_INT_GOVRH_PVBI,vpp_irqproc_govrh_pvbi);
 	vpp_irqproc_new(VPP_INT_GOVRH_VBIS,vpp_irqproc_govrh_vbis);
+	vpp_irqproc_new(VPP_INT_GOVRH2_PVBI,vpp_irqproc_govrh2_pvbi);
 	vpp_irqproc_new(VPP_INT_GOVRH2_VBIS,vpp_irqproc_govrh2_vbis);
 #endif
 	vpp_irqproc_new(VPP_INT_GOVW_PVBI,vpp_irqproc_govw_pvbi);
@@ -3626,7 +3862,16 @@ void vpp_wait_vsync(int no,int cnt)
 	vpp_int_t type;
 
 	vo_info = vout_info_get_entry(no);
-	type = (vo_info->govr->mod == VPP_MOD_GOVRH)? VPP_INT_GOVRH_VBIS:VPP_INT_GOVRH2_VBIS;
+	if( vo_info->govr == 0 )
+		return;
+
+	if( g_vpp.virtual_display ){
+		type = (govrh_get_MIF_enable(p_govrh))? VPP_INT_GOVRH_VBIS:VPP_INT_GOVRH2_VBIS;
+	}
+	else {
+		type = (vo_info->govr->mod == VPP_MOD_GOVRH)? VPP_INT_GOVRH_VBIS:VPP_INT_GOVRH2_VBIS;
+	}
+	
 	if( (no == 0) && (vppif_reg32_read(GOVW_TG_ENABLE)) ){
 		type = VPP_INT_GOVW_VBIS;
 	}
@@ -3702,22 +3947,18 @@ int vpp_common_ioctl(unsigned int cmd,unsigned long arg)
 			break;
 		case VPPIO_VPPSET_DIRECTPATH:
 			// DPRINT("[VPP] set vpu path %s\n",vpp_vpath_str[arg]);
-#if 1
-			g_vpp.vpu_path = VPP_VPATH_GOVW;
+			switch( arg ){
+#ifdef CONFIG_VPU_DIRECT_PATH
+				case VPP_VPATH_VPU:
+					g_vpp.vpu_path = VPP_VPATH_VPU;
+					g_vpp.govr = p_govrh2;
+					break;
 #endif
-#if 0	// VPU path
-			g_vpp.vpu_path = VPP_VPATH_VPU;
-#endif
-
-// #ifdef CONFIG_GOVW_SCL_PATH
-#if 0	// GOVW SCL path
-			if( g_vpp.vpu_path == VPP_VPATH_GOVW_SCL )
-				break;
-#endif
-
-#if 0	// normal path
-			g_vpp.vpu_path = (arg == VPP_VPATH_AUTO)? VPP_VPATH_AUTO_DEFAULT:arg;
-#endif
+				default:
+					g_vpp.vpu_path = VPP_VPATH_GOVW;
+					break;
+			}
+			
 			{
 				vpp_video_path_t vpath;
 
@@ -3875,6 +4116,14 @@ int vpp_common_ioctl(unsigned int cmd,unsigned long arg)
 				mod_p = vpp_mod_get_base(parm.mod);
 				if( parm.read ){
 					parm.fb = mod_fb_p->fb;
+					switch(parm.mod){
+						case VPP_MOD_GOVRH:
+						case VPP_MOD_GOVRH2:
+							govrh_get_framebuffer((govrh_mod_t *)mod_p,&parm.fb);
+							break;
+						default:
+							break;
+					}
 					copy_to_user( (void *)arg, (void *) &parm, sizeof(vpp_mod_fbinfo_t));
 				}
 				else {
@@ -3921,6 +4170,19 @@ int vpp_common_ioctl(unsigned int cmd,unsigned long arg)
 			g_vpp.stream_enable = arg;
 			g_vpp.stream_mb_sync_flag = 0;
 			DPRINT("[VPP] VPPIO_STREAM_ENABLE %d\n",g_vpp.stream_enable);
+
+			if( g_vpp.alloc_framebuf == 0 ){
+				if( arg ){
+					vout_info_t *info;
+
+					info = vout_info_get_entry(0);
+					vpp_alloc_framebuffer(info->resx,info->resy);
+				}
+				else {
+					vpp_free_framebuffer();
+				}
+			}
+			
 			vpp_pan_display(0,0,(vpp_get_govm_path() & VPP_PATH_GOVM_IN_VPU)?0:1);
 			if(!g_vpp.stream_enable){
 				vpp_lock();
@@ -3929,10 +4191,22 @@ int vpp_common_ioctl(unsigned int cmd,unsigned long arg)
 			}
 			break;
 		case VPPIO_STREAM_GETFB:
-			vpp_lock();
-			copy_to_user( (void *)arg, (void *) &g_vpp.govr->fb_p->fb,sizeof(vdo_framebuf_t));
-			retval = vpp_mb_get(g_vpp.govr->fb_p->fb.y_addr);
-			vpp_unlock();
+			{
+				vdo_framebuf_t fb;
+
+				vpp_lock();
+				fb = vout_info[0].fb;
+				fb.fb_w = vpp_calc_align(fb.fb_w,64);
+				fb.y_addr = g_vpp.mb_govw[g_vpp.stream_mb_index];
+				fb.y_size = fb.fb_w * fb.img_h;
+				fb.c_addr = fb.y_addr + fb.y_size;
+				fb.c_size = fb.y_size;
+				fb.col_fmt = VDO_COL_FMT_YUV422H;
+
+				copy_to_user( (void *)arg, (void *) &fb,sizeof(vdo_framebuf_t));
+				retval = vpp_mb_get(fb.y_addr);
+				vpp_unlock();
+			}
 			break;
 		case VPPIO_STREAM_PUTFB:
 			{
@@ -3977,86 +4251,93 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 	switch(cmd){
 		case VPPIO_VOGET_INFO:
 			{
-			vpp_vout_info_t parm;
-			vout_t *vo;
-			int num;
-			vout_inf_t *inf;
-
-//			DBGMSG("VPPIO_VOGET_INFO\n");
-
-			copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_vout_info_t));
-			num = parm.num;
-			if( num >= VOUT_MODE_MAX ){
-				retval = -ENOTTY;
-				break;
-			}
-			memset(&parm,0,sizeof(vpp_vout_info_t));
-			vo = vout_get_entry_adapter(num);
-			inf = vout_get_inf_entry_adapter(num);
-			DBG_DETAIL("VPPIO_VOGET_INFO %d,0x%x,0x%x\n",num,(int)vo,(int)inf);
-			if( vo && inf ){
-				parm.num = num;
-				parm.status = vo->status + VPP_VOUT_STS_REGISTER;
-				strncpy(parm.name,vout_adpt_str[num],10);
-
-				// get current plugin stauts
-				switch(parm.num){
-					case VOUT_BOOT:
-						break;
-					case VOUT_DVO2HDMI:
-						if( inf->chkplug(vo,1) )
-							parm.status |= VPP_VOUT_STS_PLUGIN;
-						else 
-							parm.status &= ~VPP_VOUT_STS_PLUGIN;
-						break;
-					default:
-						if( vout_chkplug(vo->num) )
-							parm.status |= VPP_VOUT_STS_PLUGIN;
-						else 
-							parm.status &= ~VPP_VOUT_STS_PLUGIN;
-						break;
-				}
-			}
-
-			// check current DVI is dvi or dvo2hdmi or lcd
-			if( inf && (inf->mode == VOUT_INF_DVI)){
+				vpp_vout_info_t parm;
 				vout_t *vo;
+				int num;
+				vout_inf_t *inf;
+				int fb_num;
+				vout_info_t *vo_info;
 
-				vo = vout_get_entry(VPP_VOUT_NUM_DVI);
-				if( vo && vo->dev ){
-					switch(num){
-						case VOUT_DVI:
-							if( strcmp("VT1632",vo->dev->name) == 0 ){
-								parm.status = VPP_VOUT_STS_REGISTER;
+	//			DBGMSG("VPPIO_VOGET_INFO\n");
+				copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_vout_info_t));
+				fb_num = (parm.num & 0xF0) >> 4;
+				num = parm.num & 0xF;
+				if( (fb_num >= VPP_VOUT_INFO_NUM) || (num >= VOUT_MODE_MAX) ){
+					retval = -ENOTTY;
+					break;
+				}
+				memset(&parm,0,sizeof(vpp_vout_info_t));
+				vo = vout_get_entry_adapter(num);
+				inf = vout_get_inf_entry_adapter(num);
+				vo_info = vout_get_info_entry(vo->num);
+				if( (g_vpp.virtual_display == 0) && (fb_num != vo_info->num) ){
+					retval = -ENOTTY;
+					break;
+				}
+				DBGMSG("VPPIO_VOGET_INFO %d,fb%d,0x%x,0x%x\n",num,vo_info->num,(int)vo,(int)inf);
+				if( vo && inf ){
+					parm.num = num;
+					parm.status = vo->status | VPP_VOUT_STS_REGISTER;
+					strncpy(parm.name,vout_adpt_str[num],10);
+					switch( inf->mode ){
+						case VOUT_INF_DVI:
+							parm.status &= ~VPP_VOUT_STS_ACTIVE;
+							if( vo->dev ){
+								// check current DVI is dvi or dvo2hdmi or lcd
+								switch(num){
+									case VOUT_DVI:
+										if( strcmp("VT1632",vo->dev->name) == 0 ){
+											parm.status |= VPP_VOUT_STS_ACTIVE;
+										}
+                    parm.status |= VPP_VOUT_STS_ACTIVE;
+										break;
+									case VOUT_LCD:
+										if( strcmp("LCD",vo->dev->name) == 0 ){
+											parm.status |= VPP_VOUT_STS_ACTIVE;
+										}
+										break;
+									case VOUT_DVO2HDMI:
+										if( strcmp("SIL902X",vo->dev->name) == 0 ){
+											parm.status |= VPP_VOUT_STS_ACTIVE;
+										}
+										break;
+									default:
+										break;
+								}
+							}
+							else { // dvi hw mode
+								if( num == VOUT_DVI )
+									parm.status |= VPP_VOUT_STS_ACTIVE;
+							}
+							
+							if( g_vpp.virtual_display ){
+								if( vout_chkplug(VPP_VOUT_NUM_HDMI) ){
+									parm.status &= ~VPP_VOUT_STS_ACTIVE;
+								}
 							}
 							break;
-						case VOUT_LCD:
-							if( strcmp("LCD",vo->dev->name) == 0 ){
-								parm.status = VPP_VOUT_STS_REGISTER;
-							}
-							break;
-						case VOUT_DVO2HDMI:
-							if( strcmp("SIL902X",vo->dev->name) == 0 ){
+						case VOUT_INF_HDMI:
+						case VOUT_INF_LVDS:
+							// check current HDMI is HDMI or LVDS
+							if( vo->inf != inf ){
 								parm.status = VPP_VOUT_STS_REGISTER;
 							}
 							break;
 						default:
 							break;
 					}
-				}
-			}
 
-			// check current HDMI is HDMI or LVDS
-			if( inf && vo && (vo->num == VPP_VOUT_NUM_HDMI)){
-				vout_t *vo;
-				
-				vo = vout_get_entry(VPP_VOUT_NUM_HDMI);
-				if( vo->inf != inf ){
-					parm.status = VPP_VOUT_STS_REGISTER;
+					if( parm.status & VPP_VOUT_STS_ACTIVE ){
+						if( vout_chkplug(vo->num) )
+							parm.status |= VPP_VOUT_STS_PLUGIN;
+						else 
+							parm.status &= ~VPP_VOUT_STS_PLUGIN;
+					}
+					else {
+						parm.status = VPP_VOUT_STS_REGISTER;
+					}
 				}
-			}
-
-			copy_to_user( (void *)arg, (const void *) &parm, sizeof(vpp_vout_info_t));
+				copy_to_user( (void *)arg, (const void *) &parm, sizeof(vpp_vout_info_t));
 			}
 			break;
 		case VPPIO_VOSET_MODE:
@@ -4068,9 +4349,11 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 			copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_vout_parm_t));
 			vo = vout_get_entry_adapter(parm.num);
 			inf = vout_get_inf_entry_adapter(parm.num);
-			DBG_DETAIL("VPPIO_VOSET_MODE %d %d\n",vo->num,parm.arg);
-			vout_set_blank((0x1 << vo->num),(parm.arg)?0:1);
-			retval = vout_set_mode(vo->num, inf->mode);
+			if( vo && inf ){
+				DBG_DETAIL("VPPIO_VOSET_MODE %d %d\n",vo->num,parm.arg);
+				vout_set_blank((0x1 << vo->num),(parm.arg)?0:1);
+				retval = vout_set_mode(vo->num, inf->mode);
+			}
 			}
 			break;
 		case VPPIO_VOSET_BLANK:
@@ -4079,8 +4362,9 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 			vout_t *vo;
 			
 			copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_vout_parm_t));
-			vo = vout_get_entry_adapter(parm.num);
-			retval = vout_set_blank((0x1 << vo->num),parm.arg);
+			if( (vo = vout_get_entry_adapter(parm.num)) ){
+				retval = vout_set_blank((0x1 << vo->num),parm.arg);
+			}
 			}
 			break;
 #ifdef WMT_FTBLK_GOVRH			
@@ -4142,10 +4426,12 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 			}
 			vo = vout_get_entry_adapter(num);
 			inf = vout_get_inf_entry_adapter(num);
-			vo->option[0] = option.option[0];
-			vo->option[1] = option.option[1];
-			vo->option[2] = option.option[2];
-			vout_set_mode(vo->num,inf->mode);
+			if( vo && inf ){
+				vo->option[0] = option.option[0];
+				vo->option[1] = option.option[1];
+				vo->option[2] = option.option[2];
+				vout_set_mode(vo->num,inf->mode);
+			}
 			}
 			break;
 		case VPPIO_VOGET_OPTION:
@@ -4183,10 +4469,13 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 #ifdef CONFIG_WMT_EDID
 			edid_info_t *edid_info;
 #endif
+			vpp_timing_t *timing;
+			vpp_vout_t mode;
 
 			copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_vout_vmode_t));
 			from_index = parm.num;
 			parm.num = 0;
+			mode = parm.mode & 0xF;
 #ifdef CONFIG_VPP_DEMO
 			parm.parm[parm.num].resx = 1920;
 			parm.parm[parm.num].resy = 1080;
@@ -4198,7 +4487,7 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 			{
 				vout_t *vo;
 
-				if( !(vo = vout_get_entry_adapter(parm.mode)) ){
+				if( !(vo = vout_get_entry_adapter(mode)) ){
 					goto vout_vmode_end;
 				}
 				
@@ -4244,14 +4533,14 @@ int vout_ioctl(unsigned int cmd,unsigned long arg)
 				support = 0;
 				
 #ifdef CONFIG_WMT_EDID
-				if( edid_find_support(edid_info,resx, resy,option) ){
+				if( edid_find_support(edid_info,resx, resy,option,&timing) ){
 #else
 				if( 1 ){
 #endif
 					support = 1;
 				}
 
-				switch( parm.mode ){
+				switch( mode ){
 					case VPP_VOUT_HDMI:
 					case VPP_VOUT_DVO2HDMI:
 						if( g_vpp.hdmi_video_mode ){
@@ -4304,7 +4593,7 @@ vout_vmode_end:
 					goto vout_edid_end;
 				}
 				
-				if( (edid = vout_get_edid(parm.mode)) == 0 ){
+				if( (edid = vout_get_edid(vo->num)) == 0 ){
 					DPRINT("*W* read EDID fail\n");
 					goto vout_edid_end;
 				}
@@ -4359,6 +4648,29 @@ vout_edid_end:
 			vppif_reg32_write(HDMI_AUD_SUB_PACKET,(arg)?0xF:0x0);
 			break;
 #endif
+#ifdef CONFIG_VPP_OVERSCAN
+		case VPPIO_VOSET_OVERSCAN_OFFSET:
+			{
+				vpp_vout_overscan_offset_t parm;
+				vout_info_t *vo_info;
+				
+				copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_vout_overscan_offset_t));
+				if( (vo_info = vout_get_info_entry(parm.fb_idx)) ){
+					vo_info->fb_xoffset = parm.xoffset;
+					vo_info->fb_yoffset = parm.yoffset;
+					vo_info->fb_clr = ~0x0;
+				}
+			}
+			break;
+#endif
+#ifdef CONFIG_VPP_VIRTUAL_DISPLAY
+		case VPPIO_VOSET_VIRTUAL_FBDEV:
+			//disable fb0
+			//vout_set_blank(VPP_VOUT_ALL,1);
+			g_vpp.virtual_display = arg;
+			DPRINT("[VPP] virtual display %d\n",(int)arg);
+			break;
+#endif			
 		default:
 			retval = -ENOTTY;
 			break;
@@ -4538,7 +4850,19 @@ int vpu_ioctl(unsigned int cmd,unsigned long arg)
 			break;
 		case VPPIO_VPU_CLR_FBDISP:
 			retval = vpp_disp_fb_clr(0,0);
-			break;	
+			break;
+		case VPPIO_VPUSET_DEIMODE:
+			{
+			vpp_deinterlace_parm_t parm;
+
+			copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_deinterlace_parm_t));
+			p_vpu->dei_mode = parm.mode;
+			vpu_dei_set_mode(p_vpu->dei_mode);
+			if( !vpp_mv_debug ){
+			 	vpu_dei_set_param(p_vpu->dei_mode,parm.level);
+			}
+			}
+			break;
 		default:
 			retval = -ENOTTY;
 			break;
@@ -4549,21 +4873,110 @@ int vpu_ioctl(unsigned int cmd,unsigned long arg)
 int scl_ioctl(unsigned int cmd,unsigned long arg)
 {
 	int retval = 0;
+	extern int ge_do_alpha_bitblt(vdo_framebuf_t *src,vdo_framebuf_t *src2,vdo_framebuf_t *dst);
 
 	if( g_vpp.vpp_path == VPP_VPATH_SCL ){
 		return -ENOTTY;
 	}
 
 	switch(cmd){
+		case VPPIO_SCL_SCALE_OVERLAP:
+			{
+				vpp_scale_overlap_t parm;
+
+				copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_scale_overlap_t));
+				
+				// enable VPU
+				auto_pll_divisor(DEV_VPU,CLK_ENABLE,0,0);
+				vpu_set_enable(1);
+				vpu_r_set_mif_enable(1);
+				vpu_r_set_mif2_enable(1);
+
+				p_vpu->scl_fb = parm.dst_fb;
+				ge_do_alpha_bitblt(&parm.src_fb,&parm.src2_fb,&parm.dst_fb);
+				
+				// disable VPU
+				vpu_r_set_mif_enable(0);
+				vpu_r_set_mif2_enable(0);
+				vpu_set_enable(0);
+				auto_pll_divisor(DEV_VPU,CLK_DISABLE,0,0);
+				
+				copy_to_user( (void *) arg, (void *) &parm, sizeof(vpp_scale_overlap_t));
+			}
+			break;
+		case VPPIO_SCL_SCALE_VPU:
+			{
+				vpp_scale_t parm;
+				extern int vpu_proc_scale(vdo_framebuf_t *src_fb,vdo_framebuf_t *dst_fb);
+
+				p_vpu->scale_sync = 1;
+				copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_scale_t));
+				
+				auto_pll_divisor(DEV_VPU,CLK_ENABLE,0,0);
+				
+				vpu_set_enable(1);
+				vpu_r_set_mif_enable(1);
+				vpu_r_set_mif2_enable(1);
+				
+				vpp_set_NA12_hiprio(1);
+#ifdef CONFIG_VPP_MOTION_VECTOR
+				if(p_vpu->dei_mode == VPP_DEI_MOTION_VECTOR ){
+					parm.src_fb.flag |= VDO_FLAG_MOTION_VECTOR;
+					vpp_dei_mv_duplicate(&parm.src_fb);
+				}
+#endif
+				p_vpu->scl_fb = parm.dst_fb;
+				ge_do_alpha_bitblt(&parm.src_fb,0,&parm.dst_fb);
+				vpp_set_NA12_hiprio(0);
+
+				// disable VPU
+				vpu_r_set_mif_enable(0);
+				vpu_r_set_mif2_enable(0);
+				vpu_set_enable(0);
+				
+				auto_pll_divisor(DEV_VPU,CLK_DISABLE,0,0);
+
+				retval = 0;
+				copy_to_user( (void *) arg, (void *) &parm, sizeof(vpp_scale_t));
+#ifdef CONFIG_VPP_MOTION_VECTOR
+				if( vpp_mv_debug ){
+					vpp_dei_mv_analysis(&parm.src_fb,&parm.dst_fb);
+				}
+#endif
+			}			
+			break;
 		case VPPIO_SCL_SCALE_ASYNC:
 		case VPPIO_SCL_SCALE:
 			{
-			vpp_scale_t parm;
+				vpp_scale_t parm;
 
-			p_scl->scale_sync = (cmd==VPPIO_SCL_SCALE)? 1:0;
-			copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_scale_t));
-			retval = vpp_set_recursive_scale(&parm.src_fb,&parm.dst_fb);
-			copy_to_user( (void *) arg, (void *) &parm, sizeof(vpp_scale_t));
+//				g_vpp.scale_type = VPP_SCALE_TYPE_OVERLAP;
+				p_scl->scale_sync = (cmd==VPPIO_SCL_SCALE)? 1:0;
+				copy_from_user( (void *) &parm, (const void *)arg, sizeof(vpp_scale_t));
+				switch( g_vpp.scale_type ){
+					case VPP_SCALE_TYPE_OVERLAP:
+						{
+						// enable VPU
+						auto_pll_divisor(DEV_VPU,CLK_ENABLE,0,0);
+						vpu_set_enable(1);
+						vpu_r_set_mif_enable(1);
+						vpu_r_set_mif2_enable(1);
+
+						ge_do_alpha_bitblt(&parm.src_fb,0,&parm.dst_fb);
+
+						// disable VPU
+						vpu_r_set_mif_enable(0);
+						vpu_r_set_mif2_enable(0);
+						vpu_set_enable(0);
+						auto_pll_divisor(DEV_VPU,CLK_DISABLE,0,0);
+						}
+						break;
+					case VPP_SCALE_TYPE_NORMAL:
+					default:
+						retval = vpp_set_recursive_scale(&parm.src_fb,&parm.dst_fb);
+						break;
+				}
+				copy_to_user( (void *) arg, (void *) &parm, sizeof(vpp_scale_t));
 			}
 			break;
 #ifdef WMT_FTBLK_SCL
@@ -4573,6 +4986,10 @@ int scl_ioctl(unsigned int cmd,unsigned long arg)
 #endif
 		case VPPIO_SCL_SCALE_FINISH:
 			retval = p_scl->scale_finish();
+			break;
+
+		case VPPIO_SCL_SCALE_TYPE:
+			g_vpp.scale_type = arg;
 			break;
 		default:
 			retval = -ENOTTY;
@@ -4655,7 +5072,13 @@ int vpp_ioctl(unsigned int cmd,unsigned long arg)
 			break;
 		case VPPIO_SCL_BASE ... (VPPIO_MAX-1):
 //			DBGMSG("SCL ioctl\n");
+#ifdef CONFIG_VPP_MOTION_VECTOR
 			retval = scl_ioctl(cmd,arg);
+#else
+			vpp_set_mutex(1,0);
+			retval = scl_ioctl(cmd,arg);
+			vpp_set_mutex(1,1);
+#endif
 			break;
 		default:
 			retval = -ENOTTY;
@@ -4688,27 +5111,66 @@ int vpp_set_audio(int format,int sample_rate,int channel)
 	return vout_set_audio(&info);
 }
 
+// this function is for old vpp api compatible, if value < 1M is pico else HZ
+unsigned int vpp_check_pixclock(unsigned int pixclk,int hz)
+{
+	unsigned int pixclk_hz;
+
+	pixclk_hz = ( pixclk > 1000000 )? pixclk:(PICOS2KHZ(pixclk)*1000);
+	return (hz)? pixclk_hz:KHZ2PICOS(pixclk_hz/1000);
+}
+
 void vpp_get_info(int fbn,struct fb_var_screeninfo *var)
 {
 	vout_info_t *info;
 	vpp_clock_t tmr;
 
 	info = vout_info_get_entry(fbn);
-	info->govr->get_tg(&tmr);
-
-	var->xres = info->resx;
-	var->yres = info->resy;
-	var->xres_virtual = vpp_calc_fb_width(VPP_UBOOT_COLFMT,var->xres);
-	var->yres_virtual = var->yres;
-	var->pixclock = vpp_get_base_clock(info->govr->mod) / 1000;
-	var->pixclock = KHZ2PICOS(var->pixclock);
-	var->left_margin = tmr.begin_pixel_of_active;
-	var->right_margin = tmr.total_pixel_of_line - tmr.end_pixel_of_active;
-	var->upper_margin = tmr.begin_line_of_active;
-	var->lower_margin = tmr.total_line_of_frame - tmr.end_line_of_active;
-	var->hsync_len = tmr.hsync;
-	var->vsync_len = tmr.vsync;
-	DBG_MSG("(%d,%dx%d,%d)\n",fbn,var->xres,var->yres,var->pixclock);
+#ifdef CONFIG_VPP_OVERSCAN
+	if( info->fb_xres ){
+		var->xres = info->fb_xres;
+		var->yres = info->fb_yres;
+		var->pixclock = KHZ2PICOS((var->xres * var->yres * 60) / 1000);
+	}
+	else
+#endif
+	{
+		if( info->govr ){
+			info->govr->get_tg(&tmr);
+			info->pixclk = vpp_get_base_clock(info->govr->mod);
+			var->pixclock = KHZ2PICOS(info->pixclk/1000);
+			var->left_margin = tmr.begin_pixel_of_active;
+			var->right_margin = tmr.total_pixel_of_line - tmr.end_pixel_of_active;
+			var->upper_margin = tmr.begin_line_of_active;
+			var->lower_margin = tmr.total_line_of_frame - tmr.end_line_of_active;
+			var->hsync_len = tmr.hsync;
+			var->vsync_len = tmr.vsync;
+		}
+		else {
+			var->pixclock = KHZ2PICOS((info->resx * info->resy * 60) / 1000);
+		}
+		var->xres = info->resx;
+		var->yres = info->resy;
+	}
+	var->xres_virtual = vpp_calc_fb_width(g_vpp.mb_colfmt,var->xres);
+	var->yres_virtual = var->yres * VPP_MB_ALLOC_NUM;
+	info->pico = var->pixclock;
+	if(g_vpp.mb_colfmt == VDO_COL_FMT_ARGB){
+		var->bits_per_pixel = 32;
+		var->red.offset = 16;
+		var->red.length = 8;
+		var->red.msb_right = 0;
+		var->green.offset = 8;
+		var->green.length = 8;
+		var->green.msb_right = 0;
+		var->green.offset = 0;
+		var->green.length = 8;
+		var->green.msb_right = 0;
+		var->transp.offset = 24;
+		var->transp.length = 8;
+		var->transp.msb_right = 0;
+	}
+	DBG_MSG("(%d,%dx%d,%dx%d,%d,%d)\n",fbn,var->xres,var->yres,var->xres_virtual,var->yres_virtual,var->pixclock,var->bits_per_pixel);
 }
 
 #if 0
@@ -4757,7 +5219,10 @@ void vpp_var_to_fb(struct fb_var_screeninfo *var, struct fb_info *info,vdo_frame
 				break;
 		}
 
-		var->xres_virtual = vpp_calc_fb_width(fb->col_fmt,var->xres);
+        if(info->node)//modify by aksenxu, keep buffer width 64byte alignment, otherwise scl will cause error
+            var->xres_virtual = vpp_calc_align(var->xres_virtual, 64);
+        else
+            var->xres_virtual = vpp_calc_fb_width(fb->col_fmt,var->xres);
 		fb->img_w = var->xres;
 		fb->img_h = var->yres;
 		fb->fb_w = var->xres_virtual;
@@ -4771,6 +5236,7 @@ void vpp_var_to_fb(struct fb_var_screeninfo *var, struct fb_info *info,vdo_frame
 		addr *= var->bits_per_pixel >> 3;
 		addr += info->fix.smem_start;
 		fb->y_addr = addr;
+		fb->y_size = var->xres_virtual * var->yres * (var->bits_per_pixel >> 3);
 	}
 
 	if ( info && (info->node==0) && (fb_egl_swap != 0))	// for Android
@@ -4781,6 +5247,53 @@ void vpp_var_to_fb(struct fb_var_screeninfo *var, struct fb_info *info,vdo_frame
 		vpp_show_fb_info(info);
 #endif
 }
+
+#ifdef CONFIG_VPP_OVERSCAN
+int vpp_fb_post_scale(vout_info_t *vo_info,unsigned int offset)
+{
+	vdo_framebuf_t src,dst,out;
+	unsigned int y_bpp,c_bpp;
+
+	if( vo_info->fb_xres == 0 )
+		return 0;
+
+	// out fb
+	govrh_get_framebuffer(vo_info->govr,&out);				
+	vpp_get_colfmt_bpp(out.col_fmt,&y_bpp,&c_bpp);
+	offset = (offset)?1:0;
+	out.y_addr = g_vpp.mb_govw[offset];
+	out.y_size = out.fb_w * out.fb_h * y_bpp / 8;
+	out.c_addr = out.y_addr + out.y_size;
+	out.c_size = (c_bpp)? (out.fb_w * out.fb_h * c_bpp / 8):0;
+	if( vo_info->fb_clr & (0x1 << offset) ){
+		unsigned int yaddr,caddr;
+
+		yaddr = (unsigned int) mb_phys_to_virt(out.y_addr);
+		caddr = (unsigned int) mb_phys_to_virt(out.c_addr);
+		memset((void *)yaddr,0x0,out.y_size);
+		memset((void *)caddr,0x80,out.c_size);
+		
+		vo_info->fb_clr &= ~(0x1 << offset);
+	}
+
+	// scale dst fb
+	dst = out;
+	dst.img_w -= (vo_info->fb_xoffset * 2);
+	dst.img_h -= (vo_info->fb_yoffset * 2);
+	offset = ((vo_info->fb_yoffset * dst.fb_w) + vo_info->fb_xoffset) * y_bpp / 8;
+		dst.y_addr = out.y_addr + offset;
+	offset = ((vo_info->fb_yoffset * dst.fb_w) + vo_info->fb_xoffset) * c_bpp / 8;
+	dst.c_addr = out.c_addr + offset;
+
+	// scale
+	src = vo_info->fb;
+	p_scl->scale_sync = 1;
+	vpp_set_recursive_scale(&src,&dst);
+	
+	vout_set_framebuffer(vout_get_mask(vo_info),&out);
+	return 1;
+}
+#endif
 
 int vpp_pan_display(struct fb_var_screeninfo *var, struct fb_info *info,int enable)
 {
@@ -4793,7 +5306,19 @@ int vpp_pan_display(struct fb_var_screeninfo *var, struct fb_info *info,int enab
     if( g_vpp.ge_direct_init == 0 )
 		return 0;
 
+	if( g_vpp.hdmi_certify_flag )
+		return 0;
+
 	vo_info = vout_info_get_entry((info)? info->node:0);
+	if( vo_info->govr && vpp_check_dbg_level(VPP_DBGLVL_DISPFB) ){
+		char buf[50];
+		unsigned int yaddr,caddr;
+
+		govrh_get_fb_addr(vo_info->govr,&yaddr,&caddr);
+		sprintf(buf,"pan_display %d,%s,isr %d,0x%x",vo_info->num,vpp_mod_str[vo_info->govr_mod],vo_info->govr->vbis_cnt,yaddr);
+		vpp_dbg_show(VPP_DBGLVL_DISPFB,vo_info->num+1,buf);
+	}
+	
 	if( info && info->node ){	// only fb0 will check vpp_path
 		goto pan_disp_govr2;
 	}
@@ -4805,13 +5330,6 @@ int vpp_pan_display(struct fb_var_screeninfo *var, struct fb_info *info,int enab
 		enable = 0;
 	}
 	
-#ifdef CONFIG_VPP_STREAM_CAPTURE
-	if( g_vpp.stream_enable ){
-		path = VPP_VPATH_GOVW;
-		enable = 0;
-	}
-#endif
-		
 	if( g_vpp.vpp_path != path ){
 #ifdef CONFIG_HW_VPU_HALT_GOVW_TG_ERR
 		if( vpp_govm_path ){
@@ -4832,9 +5350,48 @@ pan_disp_govr2:
 		fb_p = vo_info->govr->fb_p;
 		vpp_var_to_fb(var,info,&vo_info->fb);
 		if( enable ){
+#ifdef CONFIG_VPP_OVERSCAN
+			if( vpp_fb_post_scale(vo_info,var->yoffset) )
+				return 0;
+#endif
+			
 //			if( var && (var->xres == fb_p->fb.img_w) && (var->yres == fb_p->fb.img_h) ){
-				vout_set_framebuffer((g_vpp.dual_display)? vo_info->vo_mask:VPP_VOUT_ALL,&vo_info->fb);
+				vout_set_framebuffer(vout_get_mask(vo_info),&vo_info->fb);
 //			}
+#ifdef CONFIG_VPP_STREAM_CAPTURE
+			if( g_vpp.stream_enable ){
+				int index = g_vpp.stream_mb_index;
+				
+				if( (info && (info->node==0)) || (info==0) ){
+					do {
+						index++;
+						if( index >= g_vpp.mb_govw_cnt ){
+							index = 0;
+						}
+
+						if( g_vpp.stream_mb_lock & (0x1 << index) ){
+							continue;
+						}
+						break;
+					} while(1);
+
+					g_vpp.stream_mb_index = index;
+					{
+						vdo_framebuf_t src,dst;
+
+						p_scl->scale_sync = 1;
+						src = vo_info->fb;
+						dst = vo_info->fb;
+						dst.col_fmt = VDO_COL_FMT_YUV422H;
+						dst.fb_w = vpp_calc_align(dst.fb_w,64);
+						dst.y_addr = g_vpp.mb_govw[index];
+						dst.c_addr = dst.y_addr + (dst.fb_w * dst.img_h);
+						
+						vpp_set_recursive_scale(&src,&dst);
+					}
+				}
+			}
+#endif
 		}
 	}
 #endif
@@ -4845,20 +5402,30 @@ int vpp_set_par(struct fb_info *info)
 {
 	vout_info_t *vo_info;
 
+	if( g_vpp.hdmi_certify_flag )
+		return 0;
+
 	if( (g_vpp.dual_display == 0) && (info->node == 1) ){
 		return 0;
 	}
 
 	vo_info = vout_info_get_entry(info->node);
-	info->var.xres_virtual = vpp_calc_fb_width(VPP_UBOOT_COLFMT,info->var.xres);
+#ifdef CONFIG_VPP_OVERSCAN
+	if( vo_info->fb_xres ){
+		g_vpp.govrh_preinit = 0;
+		g_vpp.ge_direct_init = 1;
+		return 0;
+	}
+#endif
+	
+	info->var.xres_virtual = vpp_calc_fb_width(g_vpp.mb_colfmt,info->var.xres);
 	if( (vo_info->force_config) || (g_vpp.govrh_preinit) ){
 		vo_info->force_config = 0;
 	}
-	else if( (vo_info->resx == info->var.xres) && (vo_info->resy == info->var.yres) /* && 
-		(vo_info->pixclk == info->var.pixclock) */ ){
+	else if( (vo_info->resx == info->var.xres) && (vo_info->resy == info->var.yres) && 
+		(vo_info->pico == info->var.pixclock) ){
 		return 0;
 	}
-
 	DBG_MSG("fb%d,%dx%d,%d\n",info->node,info->var.xres,info->var.yres,info->var.pixclock);
 	DBG_MSG("vir %dx%d\n",info->var.xres_virtual,info->var.yres_virtual);
 //	DBG_MSG("%dx%d,%d\n",vo_info->resx,vo_info->resy,vo_info->pixclk);
@@ -4868,8 +5435,8 @@ int vpp_set_par(struct fb_info *info)
 	vo_info->resy = info->var.yres;
 	vo_info->resx_virtual = info->var.xres_virtual;
 	vo_info->resy_virtual = info->var.yres_virtual;
-//	vo_info->pixclk = info->var.pixclock;
-	vo_info->pixclk = KHZ2PICOS(info->var.pixclock) * 1000;
+	vo_info->pico = info->var.pixclock;
+	vo_info->pixclk = vpp_check_pixclock(info->var.pixclock,1);
 	vo_info->bpp = info->var.bits_per_pixel;
 	vo_info->fps = info->var.pixclock / (info->var.xres * info->var.yres);
 	if( vo_info->fps == 0 ) vo_info->fps = 60;
@@ -4893,24 +5460,22 @@ int vpp_set_par(struct fb_info *info)
 #endif
 
 	vpp_config(vo_info);
-
+	if( vo_info->govr ){
+		vo_info->pixclk = vpp_get_base_clock(vo_info->govr->mod);
+		info->var.pixclock = KHZ2PICOS(vo_info->pixclk/1000);
+	}
+	info->var.xres = vo_info->resx;
+	info->var.yres = vo_info->resy;
+	info->var.xres_virtual = vpp_calc_fb_width(g_vpp.mb_colfmt,info->var.xres);
+	info->var.yres_virtual = info->var.yres * VPP_MB_ALLOC_NUM;
+	
 	if( info->node == 1 ){
 		info->fix.smem_start = g_vpp.mb[0];
 		info->fix.smem_len = g_vpp.mb_fb_size * VPP_MB_ALLOC_NUM;
 		info->screen_base = mb_phys_to_virt(info->fix.smem_start);
+		info->var.yres_virtual = info->var.yres * VPP_MB_ALLOC_NUM;
 //		DPRINT("[VPP] fb1 smem 0x%x,len %d,base 0x%x\n",info->fix.smem_start,info->fix.smem_len,info->screen_base);
 	}
-
-	if( (vo_info->resx != info->var.xres) || (vo_info->resy != info->var.yres) ){
-		DBG_MSG("vout mode update (%dx%d)\n",vo_info->resx,vo_info->resy);
-		info->var.xres = vo_info->resx;
-		info->var.yres = vo_info->resy;
-	}
-	info->var.xres_virtual = vpp_calc_fb_width(VPP_UBOOT_COLFMT,info->var.xres);
-	info->var.yres_virtual = info->var.yres * VPP_MB_ALLOC_NUM;
-	info->var.pixclock = vpp_get_base_clock(vo_info->govr->mod) / 1000;
-	info->var.pixclock = KHZ2PICOS(info->var.pixclock);
-	vo_info->pixclk = info->var.pixclock;
 	g_vpp.ge_direct_init = 1;
 	vpp_set_mutex(info->node,0);
 	
@@ -4922,15 +5487,33 @@ int vpp_set_par(struct fb_info *info)
 int vpp_set_blank(struct fb_info *info,int blank)
 {
 	vout_info_t *vo_info;
+	unsigned int vout_blank_mask = 0,vout_unblank_mask = 0;
 
 	if( (g_vpp.dual_display == 0) && (info->node == 1) ){
 		return 0;
 	}
 
 	DBG_MSG("(%d,%d)\n",info->node,blank);
-	
+
 	vo_info = vout_info_get_entry(info->node);
-	vout_set_blank((g_vpp.dual_display)? vo_info->vo_mask:VPP_VOUT_ALL,blank);
+	if( blank ){
+		vout_blank_mask = vout_get_mask(vo_info);
+	}
+	else {
+		vout_unblank_mask = vout_get_mask(vo_info);
+	}
+
+	if( g_vpp.virtual_display || (g_vpp.dual_display == 0) ){
+		int plugin;
+		
+		plugin = vout_chkplug(VPP_VOUT_NUM_HDMI);
+		vout_blank_mask &= ~((0x1 << VPP_VOUT_NUM_DVI)+(0x1 << VPP_VOUT_NUM_HDMI));
+		vout_unblank_mask &= ~((0x1 << VPP_VOUT_NUM_DVI)+(0x1 << VPP_VOUT_NUM_HDMI));
+		vout_blank_mask |= (plugin)? (0x1 << VPP_VOUT_NUM_DVI):(0x1 << VPP_VOUT_NUM_HDMI);
+		vout_unblank_mask |= (plugin)? (0x1 << VPP_VOUT_NUM_HDMI):(0x1 << VPP_VOUT_NUM_DVI);
+	}
+	vout_set_blank(vout_blank_mask,1);
+	vout_set_blank(vout_unblank_mask,0);
 	return 0;
 }
 

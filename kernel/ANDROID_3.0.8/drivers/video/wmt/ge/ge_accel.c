@@ -30,8 +30,8 @@
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
 #include <mach/hardware.h>
+#include "com-ge.h"
 #include "ge_accel.h"
-#include "ge_ioctl.h"
 
 #define VPU
 
@@ -78,12 +78,13 @@ extern int auto_pll_divisor(enum dev_id dev, enum clk_cmd cmd,
 #define GE_OPTION_NOSYNC     0x00000004
 #define GE_OPTION_SYNC2      0x00000008
 
-#define GE_SW_ONLY
+/* #define GE_SW_ONLY */
 
 DECLARE_WAIT_QUEUE_HEAD(ge_wq);
 static ge_info_t *geinfo;
 static ge_surface_t primary_surface[1];
 static unsigned int *ge_regs_save;
+static unsigned int *ge_regs_save2;
 #if GE_DEBUG
 static unsigned int ge_regs_save_cksum;
 #endif
@@ -143,26 +144,23 @@ EXPORT_SYMBOL(phy_mem_end_sub);
 
 static irqreturn_t ge_interrupt(int irq, void *dev_id)
 {
-	volatile struct ge_regs_8710 *ge_regs;
+	volatile ge_regs_t *regs = (ge_regs_t *)geinfo->mmio;
+	volatile unsigned int val;
 
-	ge_regs = geinfo->mmio;
+	/* save flags */
+	val = regs->ge_int_stat;
+	regs->ge_int_stat = val | regs->ge_int_flag;
+		
+	/* write clear regs->ge_int_flag to stop interrupts */
+	regs->ge_int_flag = ~0;
 
-	/* Reset if GE timeout. */
-	if ((ge_regs->ge_int_en & BIT9) && (ge_regs->ge_int_flag & BIT9)) {
-		printk("%s: GE Engine Time-Out Status! \n", __func__);
-		ge_regs->ge_eng_en = 0;
-		ge_regs->ge_eng_en = 1;
-		while (ge_regs->ge_status & (BIT5 | BIT4 | BIT3));
-	}
+	ge_mb();
 
-	/* Clear GE interrupt flags. */
-	ge_regs->ge_int_flag |= ~0;
+	if ((regs->ge_int_stat & BIT8) == 0 || regs->ge_status != 0)
+		printk("%s: error. ge_status = %08x, ge_int_stat = %08x\n",
+			__func__, regs->ge_status, regs->ge_int_stat);
 
-	if (ge_regs->ge_status == 0)
-		wake_up_interruptible(&ge_wq);
-	else
-		printk(KERN_ERR "%s: Incorrect GE status (0x%x)! \n",
-			__func__, ge_regs->ge_status);
+	wake_up_interruptible(&ge_wq);
 
 	return IRQ_HANDLED;
 }
@@ -362,12 +360,15 @@ static struct ge_var *create_ge_var(struct fb_info *info)
 
 	INIT_WORK(&ge_var->work, ge_var_work);
 
+	ge_var->start(ge_var);
+
 	return ge_var;
 }
 
 static void release_ge_var(struct ge_var *ge_var)
 {
 	if (ge_var) {
+		ge_var->stop(ge_var);
 		flush_workqueue(ge_var->wq);
 		destroy_workqueue(ge_var->wq);
 		kfree(ge_var);
@@ -426,13 +427,12 @@ static void ge_var_sync(struct ge_var *ge_var)
 	}
 
 	memcpy(ge_var->var, ge_var->new_var, sizeof(struct fb_var_screeninfo));
-
 	ge_vo_pan_display(ge_var->var, ge_var->info);
-	ge_vo_wait_vsync();
-
 	ge_var->dirty = 0;
 
 	spin_unlock(ge_var->lock);
+
+	ge_vo_wait_vsync();
 }
 
 static void ge_var_sync2(struct ge_var *ge_var)
@@ -457,14 +457,13 @@ static void ge_var_sync2(struct ge_var *ge_var)
 		(t.tv_usec - mrft->tv_usec);
 
 	ge_vo_pan_display(ge_var->var, ge_var->info);
+	ge_var->dirty = 0;
+
+	spin_unlock(ge_var->lock);
 
 	/* 60 fps */
 	if (us < 16667)
 		ge_vo_wait_vsync();
-
-	ge_var->dirty = 0;
-
-	spin_unlock(ge_var->lock);
 
 	do_gettimeofday(&ge_var->most_recent_flip_time);
 }
@@ -652,7 +651,7 @@ static int unlock_screen(struct fb_info *info)
 int ge_init(struct fb_info *info)
 {
 	static int boot_init; /* boot_init = 0 */
-	volatile struct ge_regs_8710 *regs;
+	volatile ge_regs_t *regs;
 	unsigned int chip_id;
 	unsigned int ge_irq;
 	ge_surface_t s;
@@ -690,6 +689,7 @@ int ge_init(struct fb_info *info)
 			ge_irq = IRQ_VPP_IRQ7;
 			break;
 		case 0x3445:		/* WM8710 */
+		case 0x3481:		/* WM8950 */
 			ge_clock_enable(1);
 			ge_irq = IRQ_VPP_IRQ7;
 			break;
@@ -733,9 +733,10 @@ int ge_init(struct fb_info *info)
 		 * let GOVRH to read GE's memory.
 		 */
 		memcpy(&logo, &s, sizeof(ge_surface_t));
-		
+
 		vo = vout_info_get_entry(0);
 		vo->govr->fb_p->get_addr((unsigned int *)&logo.addr,(unsigned int *)&i);
+		
 		if (logo.addr != s.addr) {
 			/* Due to U-Boot logo may overlap to 1st buffer,
 			 * we have to copy U-Boot logo to 2nd buffer first,
@@ -763,7 +764,12 @@ int ge_init(struct fb_info *info)
 				ge_unlock(geinfo);
 #endif /* GE_SW_ONLY */
 				logo.addr = s.addr;
-				vo->govr->fb_p->set_addr(s.addr,0);
+				p_govrh->fb_p->fb.y_addr = s.addr;
+				p_govrh->fb_p->fb.c_addr = 0;
+				govrh_set_fb_addr(p_govrh,s.addr,0);
+				p_govrh2->fb_p->fb.y_addr = s.addr;
+				p_govrh2->fb_p->fb.c_addr = 0;
+				govrh_set_fb_addr(p_govrh2,s.addr,0);
 			}
 		}
 
@@ -849,7 +855,7 @@ static int get_args(unsigned int *to, void *from, int num)
  */
 int ge_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
-	volatile struct ge_regs_8710 *regs;
+	volatile ge_regs_t *regs;
 	int ret = 0;
 	unsigned int chip_id;
 	unsigned int args[8];
@@ -884,7 +890,7 @@ int ge_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 		ge_set_amx_colorkey((u32)arg, 0);
 		break;
 	case GEIO_WAIT_SYNC:
-		ge_wait_sync(geinfo);
+		ge_wait_sync_timeout(geinfo, arg);
 		break;
 	case GEIO_LOCK:
 		switch (arg) {
@@ -957,7 +963,11 @@ void ge_wait_vsync(void)
 
 int ge_sync(struct fb_info *info)
 {
+	/*
+	ge_lock(geinfo);
 	ge_wait_sync(geinfo);
+	ge_unlock(geinfo);
+	*/
 
 	return 0;
 }
@@ -1046,7 +1056,7 @@ int ge_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
  */
 int ge_blank(int mode, struct fb_info *info)
 {
-	volatile struct ge_regs_8710 *regs;
+	volatile ge_regs_t *regs;
 
 	vpp_set_blank(info,mode);
 
@@ -1085,12 +1095,12 @@ int ge_blank(int mode, struct fb_info *info)
 
 int ge_suspend(struct fb_info *info)
 {
-	volatile struct ge_regs_8710 *regs;
+	volatile ge_regs_t *regs;
 	unsigned int ge_regs_save_len;
 	unsigned int id = geinfo->id >> 16;
 
 	if (id <= 0x3445) {
-		ge_regs_save_len = sizeof(struct ge_regs_8710);
+		ge_regs_save_len = sizeof(ge_regs_t);
 
 		ge_clock_enable(1);
 
@@ -1110,16 +1120,36 @@ int ge_suspend(struct fb_info *info)
 
 		ge_clock_enable(0);
 	}
+	else {
+		ge_regs_save_len = sizeof(ge_regs_t);
 
+		ge_clock_enable(1);
+
+		regs = geinfo->mmio;
+		regs->g1_amx_en = 0;
+		regs->g2_amx_en = 0;
+		regs->ge_reg_sel = 1;
+		regs->ge_reg_upd = 1;
+
+		/* reset GE */
+		regs->bitblt_alpha = 0xff;
+		regs->ck_sel = 0;
+		regs->ge_eng_en = 0;
+		regs->ge_eng_en = 1;
+
+		ge_regs_save = ge_backup_reg(GE1_BASE_ADDR,256);
+		ge_regs_save2 = ge_backup_reg(GE1_BASE_ADDR+0x1000,256);
+		ge_clock_enable(0);
+	}
 	return 0;
 }
 
 int ge_resume(struct fb_info *info)
 {
-	volatile struct ge_regs_8710 *regs;
+	volatile ge_regs_t *regs;
 	unsigned int ge_regs_save_len;
 
-	ge_regs_save_len = sizeof(struct ge_regs_8710);
+	ge_regs_save_len = sizeof(ge_regs_t);
 
 	ge_clock_enable(1);
 
@@ -1127,8 +1157,16 @@ int ge_resume(struct fb_info *info)
 
 	ge_lock(geinfo);
 
+#if 1
+	ge_restore_reg(GE1_BASE_ADDR,256,
+			ge_regs_save);
+	ge_restore_reg(GE1_BASE_ADDR+0x1000,256,
+			ge_regs_save2);
+
+#else
 	ge_restore_reg((unsigned int)regs, ge_regs_save_len,
 			ge_regs_save);
+#endif
 	regs->ge_reg_sel = 0;
 	regs->ge_reg_upd = 1;
 
@@ -1218,7 +1256,7 @@ void ge_set_amx_colorkey(unsigned int color, int erase)
 void ge_simple_rotate(unsigned int phy_src, unsigned int phy_dst,
 	int width, int height, int bpp, int arc)
 {
-	volatile struct ge_regs_8710 *regs;
+	volatile ge_regs_t *regs;
 	ge_surface_t s, d;
 	unsigned int chip_id;
 
@@ -1418,6 +1456,11 @@ static void exit_procfs_ge(void)
 {
 	remove_proc_entry("status", ge_procfs_dir);
 	remove_proc_entry("ge", NULL);
+}
+
+ge_info_t *ge_get_geinfo(void)
+{
+	return geinfo;
 }
 
 #endif /* GE_STATUS */

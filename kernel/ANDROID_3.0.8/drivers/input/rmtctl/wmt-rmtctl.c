@@ -20,8 +20,6 @@
  * WonderMedia Technologies, Inc.
  * 4F, 533, Chung-Cheng Road, Hsin-Tien, Taipei 231, R.O.C
 --*/
-
-  
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/device.h>
@@ -36,21 +34,37 @@
 #include <linux/delay.h>
 #include "oem-dev.h"
 
+/*
+ * Author: Jason
+ * Date: 2012.10.04
+ * Description: Include for use wmt_getsyspara and vpp_parse_param.
+ */
+#include "../../video/wmt/vpp.h"
+
+
 #define DRIVER_DESC   "WMT rmtctl driver"
 
 #define RC_INT 55
 /* New remote control code */
 #include "wmt-rmtctl.h"
 
-#define RMTCTL_DEBUG 1
+#define RMTCTL_DEBUG 0
 #define RMT_CFG_INT_CNT
 #define RMT_CFG_REPEAT_KEY
 //#define RMT_CFG_FACTORY_NEC
 //#define RMT_CFG_WAKUP_BY_ANY_KEY
 
 #define FACTORID   0
-  
 
+/*
+ * Author: Jason
+ * Date: 2012.10.04
+ * Description: To define GPIO Address.
+ */
+#define GPIO_GP20_Enable_Register					0xFE110070
+#define GPIO_GP20_Output_Enable_Register	0xFE1100B0
+#define GPIO_GP20_Output_Data_Register		0xFE1100F0
+  
 
 static struct input_dev *idev;
 int cirisrcnt=0;
@@ -99,12 +113,12 @@ static irqreturn_t rmtctl_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	/* Keycode mapping. */
 	scancode = key[2]; 	//default
 		
-	printk(">> dev_tot_num %d\n",dev_tot_num);
+	if (RMTCTL_DEBUG) printk(">> dev_tot_num %d\n",dev_tot_num);
 	for (i=0; i < dev_tot_num; i++)
 	{
 		if (vendor == rmt_dev_tbl[i].vender_id){
 			scancode = rmt_dev_tbl[i].key_codes[key[2]];
-			printk(" vender_name %s   id 0x%04x  scan code %d \n", rmt_dev_tbl[i].vendor_name,vendor,i);
+			if (RMTCTL_DEBUG) printk(" vender_name %s   id 0x%04x  scan code %d \n", rmt_dev_tbl[i].vendor_name,vendor,i);
 			break;
 		}
 	}
@@ -115,7 +129,7 @@ static irqreturn_t rmtctl_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	if ((status & 0x2) || (scancode == KEY_RESERVED)) {
 		/* Ignore repeated or reserved keys. */
 	} else {
-		printk(KERN_ERR"%d ---------IR report key 0x%x\n" ,cirisrcnt++,scancode);
+		if (RMTCTL_DEBUG) printk(KERN_ERR"%d ---------IR report key 0x%x\n" ,cirisrcnt++,scancode);
 		input_report_key(idev, scancode, 1);
 		input_report_key(idev, scancode, 0);
 		input_sync(idev);
@@ -128,7 +142,8 @@ static void rmtctl_hw_suspend(void)
 {
 
 
-		REG32_VAL(WAKEUP_CMD1(0))=0xf10ebf40;
+		//REG32_VAL(WAKEUP_CMD1(0))=0xf10ebf40;
+                REG32_VAL(WAKEUP_CMD1(0))=0x23dc4cb3;
 		REG32_VAL(WAKEUP_CMD1(1))=0x0;
       		REG32_VAL(WAKEUP_CMD1(2))=0x0;
       		REG32_VAL(WAKEUP_CMD1(3))=0x0;
@@ -219,7 +234,7 @@ static int rmtctl_probe(struct platform_device *dev)
 
 	for ( j = 0; j < dev_tot_num; j++)
 	{
-		for (i=0;i<128;i++)
+		for (i=0;i<256;i++)
 		{
 			if (rmt_dev_tbl[j].key_codes[i]) {
 				set_bit(rmt_dev_tbl[j].key_codes[i], idev->keybit);

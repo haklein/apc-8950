@@ -32,7 +32,7 @@ struct prdt_struct{
 }__attribute__((packed)) ;
 
 // 1 presents the task init that would never be released
-#define MB_DEF_TGID				1
+#define MB_DEF_TGID				0
 
 #ifdef CONFIG_WMT_MB_RESERVE_FROM_IO
 #define mb_virt_to_phys(v)		mb_do_virt_to_phys(v,MB_DEF_TGID,THE_MB_USER)

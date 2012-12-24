@@ -811,7 +811,9 @@ static void wmt_bat_update(struct power_supply *bat_ps)
 							discharging_first_update = 1;
 							charging_first_update =0;
 							if(total_buffer == 0){
-							      bat_temp_capacity = current_percent;
+	 						      if((current_percent <= (bat_temp_capacity -4)) ||
+	 							  (current_percent >= (bat_temp_capacity + 4))	)
+								      bat_temp_capacity = current_percent;
 							      bat_capacity_old  = 0;
 							}
 						}
@@ -867,7 +869,9 @@ static void wmt_bat_update(struct power_supply *bat_ps)
 						charging_first_update = 1;
 						discharging_first_update = 0;
 						if(total_buffer == 0){
-						      bat_temp_capacity = current_percent;
+						      if((current_percent <= (bat_temp_capacity -4)) ||
+							  (current_percent >= (bat_temp_capacity + 4))	)
+						              bat_temp_capacity = current_percent;
 						      bat_capacity_old  = 100;
 						}
 					}

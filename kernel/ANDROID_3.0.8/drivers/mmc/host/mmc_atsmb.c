@@ -1668,10 +1668,13 @@ static void atsmb_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			 */
 			/*  Config SD to GPIO  */
 			GPIO_CTRL_GP14_SD0_BYTE_VAL |= SD0_PIN;
+			//GPIO_CTRL_GP3_SD0CD_BYTE_VAL |= GPIO_SD0_CD;
 			/*  SD all pins output low  */
 			GPIO_OD_GP14_SD0_BYTE_VAL &= ~SD0_PIN;
+			//GPIO_OD_GP3_SD0CD_BYTE_VAL &= ~GPIO_SD0_CD;
 			/*  Config SD to GPO   */
 			GPIO_OC_GP14_SD0_BYTE_VAL |= SD0_PIN;
+			//GPIO_OC_GP3_SD0CD_BYTE_VAL |= GPIO_SD0_CD;
 			
             
             
@@ -2174,7 +2177,7 @@ static ssize_t atsmb_state_store(struct kobject *kobj, struct kobj_attribute *at
 static struct kobj_attribute atsmb_state_attr = {	\
 	.attr	= {				\
 		.name = __stringify(state),	\
-		.mode = 0777,			\
+		.mode = 0755,			\
 	},					\
 	.show	= atsmb_state_show,			\
 	.store	= atsmb_state_store,		\

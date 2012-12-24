@@ -24,10 +24,16 @@ WonderMedia Technologies, Inc.
 #include <linux/module.h>
 #include <linux/cpufreq.h>
 #include <mach/hardware.h>
+#include <linux/regulator/consumer.h>
+#include <linux/delay.h>
+
+#include <mach/wmt_env.h>
+
+#define WM3481_A2_ID 0x34810103
 
 //#define DEBUG
 #ifdef  DEBUG
-static int dbg_mask = 0;
+static int dbg_mask = 1;
 module_param(dbg_mask, int, S_IRUGO | S_IWUSR);
 #define fq_dbg(fmt, args...) \
         do {\
@@ -46,18 +52,17 @@ module_param(dbg_mask, int, S_IRUGO | S_IWUSR);
 
 #define DVFS_TABLE_NUM_MAX  20
 #define PMC_BASE            PM_CTRL_BASE_ADDR
+#define PLLA_FREQ_KHZ       (24 * 1000)
 #define PMC_PLLA            (PM_CTRL_BASE_ADDR + 0x200)
 #define ARM_DIV_OFFSET      (PM_CTRL_BASE_ADDR + 0x300)
-#define MALI_DIV_OFFSET     (PM_CTRL_BASE_ADDR + 0x388)
-#define AHB_DIV_OFFSET      (PM_CTRL_BASE_ADDR + 0x304)
-#define APB_DIV_OFFSET      (PM_CTRL_BASE_ADDR + 0x320)
-#define L2C_DIV_OFFSET      (PM_CTRL_BASE_ADDR + 0x30C)
-#define LAXI_DIV_OFFSET     (PM_CTRL_BASE_ADDR + 0x3B0)
-#define LRAM_DIV_OFFSET     (PM_CTRL_BASE_ADDR + 0x3F0)
 
 struct wmt_dvfs_table {
     unsigned int freq;
     unsigned int vol;
+    unsigned int l2c_div;
+    unsigned int l2c_tag;
+    unsigned int l2c_data;
+    unsigned int axi;
     int index;
     struct list_head node;
 };
@@ -70,311 +75,24 @@ struct wmt_dvfs_driver_data {
     struct cpufreq_frequency_table *freq_table;
 };
 static struct wmt_dvfs_driver_data wmt_dvfs_drvdata;
-extern int wmt_setsyspara(char *varname, unsigned char *varval);
+static struct regulator *re;
+
 extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlenex);
 
-//#define WMT_CPU_TEST
-#ifdef  WMT_CPU_TEST
-#include <asm/uaccess.h>
-#include <linux/cdev.h>
-#include <linux/fs.h>
-
-#define WMT_CPU_DEV_MAJOR      166
-#define WMT_CPU_NR_DEVS        1
-#define DEV_NAME               "wmt_cpu"
-#define WMT_CPU_IOC_MAGIC      's'
-#define WMT_CPU_GET_INFO       _IOW(WMT_CPU_IOC_MAGIC, 1, struct wmt_plla_ioc)
-#define WMT_CPU_SET_FREQ       _IOW(WMT_CPU_IOC_MAGIC, 2, struct wmt_plla_ioc)
-#define WMT_CPU_SET_DIV        _IOW(WMT_CPU_IOC_MAGIC, 3, struct wmt_plla_ioc)
-#define WMT_CPU_SET_DIVF       _IOW(WMT_CPU_IOC_MAGIC, 4, struct wmt_plla_ioc)
-#define WMT_CPU_SET_DIVR       _IOW(WMT_CPU_IOC_MAGIC, 5, struct wmt_plla_ioc)
-#define WMT_CPU_SET_DIVQ       _IOW(WMT_CPU_IOC_MAGIC, 6, struct wmt_plla_ioc)
-#define WMT_CPU_IOC_OPEN_DBG   _IO(WMT_CPU_IOC_MAGIC, 20)
-#define WMT_CPU_IOC_CLOSE_DBG  _IO(WMT_CPU_IOC_MAGIC, 21)
-
-struct wmt_cpu_device {
-    struct cdev cdev;
-    struct wmt_dvfs_driver_data *drv_data;
-};
-
-struct wmt_plla_ioc {
-    enum dev_id  dev_id;
-    int freq; // plla freq
-    int filter;
-    int divf;
-    int divr;
-    int divq;
-    int arm_div;
-    int mali_div;
-    int ahb_div;
-    int apb_div;
-    int l2c_div;
-    int laxi_div;
-    int lram_div;
-};
-
-struct wmt_cpu_device wmt_cpu_dev;
-static int wmt_cpu_dev_major = 0;//WMT_CPU_DEV_MAJOR;
-static int wmt_cpu_dev_minor = 0;
-module_param(wmt_cpu_dev_major, int, S_IRUGO);
-module_param(wmt_cpu_dev_minor, int, S_IRUGO);
-static struct class *wmt_cpu_class;
-static unsigned int wmt_getspeed(unsigned int cpu);
-static int wmt_change_plla_freq(unsigned target);
-
-static int wmt_cpu_dev_open(struct inode *inode, struct file *filp)
-{
-    struct wmt_cpu_device *cpu_dev;
-
-    cpu_dev = container_of(inode->i_cdev, struct wmt_cpu_device, cdev);
-    if (cpu_dev->drv_data == NULL) {
-        fq_dbg("can not get wmt_cpu driver data\n");
-        return -ENODATA;
-    }
-    filp->private_data = cpu_dev;
-
-    return 0;
-}
-
-static int wmt_cpu_dev_close(struct inode *inode, struct file *filp)
-{
-    struct wmt_cpu_device *cpu_dev;
-
-    cpu_dev = container_of(inode->i_cdev, struct wmt_cpu_device, cdev);
-    if (cpu_dev->drv_data == NULL) {
-        fq_dbg("can not get wmt_cpu driver data\n");
-        return -ENODATA;
-    }
-
-    return 0;
-}
-
-static void get_plla_dev_info(struct wmt_plla_ioc *ioc)
-{
-    unsigned int tmp = 0;
-
-    tmp = *(volatile unsigned int *)PMC_PLLA;
-    ioc->filter = (tmp >> 24) & 0x07;
-    ioc->divf = (tmp >> 16) & 0xFF;
-    ioc->divr = (tmp >>  8) & 0x3F;
-    ioc->divq = tmp & 0x07;
-    ioc->freq = 25000 * (ioc->divf + 1) / ((1 << ioc->divq) * (ioc->divr + 1));
-    ioc->arm_div    = *(volatile unsigned char *)ARM_DIV_OFFSET;
-    ioc->mali_div   = *(volatile unsigned char *)MALI_DIV_OFFSET;
-    ioc->l2c_div    = *(volatile unsigned char *)L2C_DIV_OFFSET;
-    ioc->apb_div    = *(volatile unsigned char *)APB_DIV_OFFSET;
-    ioc->ahb_div    = *(volatile unsigned char *)AHB_DIV_OFFSET;
-    ioc->laxi_div   = *(volatile unsigned char *)LAXI_DIV_OFFSET;
-    ioc->lram_div   = *(volatile unsigned char *)LRAM_DIV_OFFSET;
-
-    return ;
-}
-
-static int set_plla_dev_freq(struct wmt_plla_ioc *ioc)
-{   
-    unsigned int target = 0;
-
-    fq_dbg("plla need to seed freq to %dKhz\n", ioc->freq);
-    if (ioc->freq < 100 * 1000 || ioc->freq > 1000 * 1000)
-        return -1;
-
-    target = ioc->freq - ioc->freq % 25000;
-    fq_dbg("plla need to seed freq to %dKhz\n", ioc->freq);
-    return wmt_change_plla_freq(target);
-}
-
-static int set_plla_dev_info(struct wmt_plla_ioc *ioc)
-{
-    struct wmt_plla_ioc tmp;
-
-    get_plla_dev_info(&tmp);
-    if (ioc->divf >= 0)
-        tmp.divf = ioc->divf;
-    if (ioc->divr >= 0)
-        tmp.divr = ioc->divr;
-    if (ioc->divq >= 0)
-        tmp.divq = ioc->divq;
-
-    if ((ioc->dev_id == DEV_ARM) && (ioc->arm_div >= 0))
-        return manu_pll_divisor(DEV_ARM, tmp.divf, tmp.divr, tmp.divq, ioc->arm_div);
-    else if ((ioc->dev_id == DEV_L2C) && (ioc->l2c_div >= 0))
-        return manu_pll_divisor(DEV_L2C, tmp.divf, tmp.divr, tmp.divq, ioc->l2c_div);
-    else if ((ioc->dev_id == DEV_L2CAXI) && (ioc->laxi_div >= 0))
-        return manu_pll_divisor(DEV_L2CAXI, tmp.divf, tmp.divr, tmp.divq, ioc->laxi_div);
-    else if ((ioc->dev_id == DEV_MALI) && (ioc->mali_div >= 0))
-        return manu_pll_divisor(DEV_MALI, tmp.divf, tmp.divr, tmp.divq, ioc->mali_div);
-    else if ((ioc->dev_id == DEV_APB) && (ioc->apb_div >= 0))
-        return manu_pll_divisor(DEV_APB, tmp.divf, tmp.divr, tmp.divq, ioc->apb_div);
-    else if ((ioc->dev_id == DEV_AHB) && (ioc->ahb_div >= 0))
-        return manu_pll_divisor(DEV_AHB, tmp.divf, tmp.divr, tmp.divq, ioc->ahb_div);
-    else
-        return -1;        
-}
-
-static long
-wmt_cpu_dev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{
-    int ret = 0;
-    int err = 0;
-    struct wmt_cpu_device *cpu_dev;
-    struct wmt_dvfs_driver_data *cpu_drv;
-    struct wmt_plla_ioc cpu_ioc;
-
-    fq_dbg("Enter\n");
-    if (_IOC_TYPE(cmd) != WMT_CPU_IOC_MAGIC)
-        return -ENOTTY;
-
-	if (_IOC_DIR(cmd) & _IOC_READ)
-        err = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
-    if (err == 0 && _IOC_DIR(cmd) & _IOC_WRITE)
-        err = !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
-    if (err)
-        return -EFAULT;
-
-    cpu_dev = filp->private_data;
-    cpu_drv = cpu_dev->drv_data;
-
-    switch (cmd) {
-    case WMT_CPU_GET_INFO:
-        ret = copy_from_user(&cpu_ioc, (void __user *)arg, sizeof(cpu_ioc));
-        if (ret == 0) {
-            get_plla_dev_info(&cpu_ioc);
-            ret = copy_to_user((void __user *)arg, &cpu_ioc, sizeof(cpu_ioc));
-        }
-        break;
-    case WMT_CPU_SET_FREQ:
-        ret = copy_from_user(&cpu_ioc, (void __user *)arg, sizeof(cpu_ioc));
-        if (ret == 0) {
-            fq_dbg("set plla freq to %dKhz\n", cpu_ioc.freq);
-            ret = set_plla_dev_freq(&cpu_ioc);
-            get_plla_dev_info(&cpu_ioc);
-            copy_to_user((void __user *)arg, &cpu_ioc, sizeof(cpu_ioc));
-        }
-        break;
-    case WMT_CPU_SET_DIV:
-    case WMT_CPU_SET_DIVF:
-    case WMT_CPU_SET_DIVR:
-    case WMT_CPU_SET_DIVQ:
-        ret = copy_from_user(&cpu_ioc, (void __user *)arg, sizeof(cpu_ioc));
-        if (ret == 0) {
-            fq_dbg("freq:%d, divf:%d, divr:%d, divq:%d\n", cpu_ioc.freq, 
-                                cpu_ioc.divf, cpu_ioc.divr, cpu_ioc.divq);
-            fq_dbg("divisor, arm:%d, mali:%d, ahb:%d, apb:%d, l2c:%d, lram:%d,"
-                    " laxi:%d\n", cpu_ioc.arm_div, cpu_ioc.mali_div,
-                    cpu_ioc.ahb_div, cpu_ioc.apb_div, cpu_ioc.l2c_div,
-                    cpu_ioc.lram_div, cpu_ioc.laxi_div);            
-            ret = set_plla_dev_info(&cpu_ioc);
-            get_plla_dev_info(&cpu_ioc);
-            copy_to_user((void __user *)arg, &cpu_ioc, sizeof(cpu_ioc));
-        }
-        break;
-#ifdef DEBUG
-    case WMT_CPU_IOC_OPEN_DBG:
-        dbg_mask = 1;
-        fq_dbg("wmt cpufreq debug info enable\n");
-        break;
-    case WMT_CPU_IOC_CLOSE_DBG:
-        fq_dbg("wmt cpufreq debug info disable\n");
-        dbg_mask = 0;
-        break;
-#endif
-    default:
-        fq_dbg("command unknow");
-		ret = -EINVAL;
-        break;
-    }
-
-    fq_dbg("Exit\n");
-    return ret;
-}
-
-static struct file_operations wmt_cpu_fops = {
-    .owner          = THIS_MODULE,
-    .open           = wmt_cpu_dev_open,
-    .unlocked_ioctl = wmt_cpu_dev_ioctl,
-    .release        = wmt_cpu_dev_close,
-};
-
-static int wmt_cpu_dev_setup(void)
-{
-    dev_t dev_no = 0;
-    int ret = 0;
-    struct device *dev = NULL;
-
-    if (wmt_cpu_dev_major) {
-        dev_no = MKDEV(wmt_cpu_dev_major, wmt_cpu_dev_minor);
-        ret = register_chrdev_region(dev_no, WMT_CPU_NR_DEVS, DEV_NAME);
-    } else {
-        ret = alloc_chrdev_region(&dev_no, wmt_cpu_dev_minor, 
-                                WMT_CPU_NR_DEVS, DEV_NAME);
-        wmt_cpu_dev_major = MAJOR(dev_no);
-        wmt_cpu_dev_minor = MINOR(dev_no);
-        fq_dbg("wmt_cpu device major is %d\n", wmt_cpu_dev_major);
-    }
-
-    if (ret < 0) {
-        fq_dbg("can not get major %d\n", wmt_cpu_dev_major);
-        goto out;
-    }
-
-    cdev_init(&wmt_cpu_dev.cdev, &wmt_cpu_fops);
-    wmt_cpu_dev.drv_data   = &wmt_dvfs_drvdata;
-    wmt_cpu_dev.cdev.owner = THIS_MODULE;
-    wmt_cpu_dev.cdev.ops   = &wmt_cpu_fops;
-    ret = cdev_add(&wmt_cpu_dev.cdev, dev_no, WMT_CPU_NR_DEVS);
-    if (ret) {
-        fq_dbg("add char dev for wmt_cpu failed\n");
-        goto release_region;
-    }
-
-    wmt_cpu_class = class_create(THIS_MODULE, "wmt_cpu_class");
-    if (IS_ERR(wmt_cpu_class)) {
-        fq_dbg("create wmt_cpu class failed\n");
-        ret = PTR_ERR(wmt_cpu_class);
-        goto release_cdev;
-    }
-
-    dev = device_create(wmt_cpu_class, NULL, dev_no, NULL, DEV_NAME);
-	if (IS_ERR(dev)) {
-        fq_dbg("create device for wmt cpu failed\n");
-		ret = PTR_ERR(dev);
-		goto release_class;
-	}
-    goto out;
-
-release_class:
-    class_destroy(wmt_cpu_class);
-    wmt_cpu_class = NULL;
-release_cdev:
-    cdev_del(&wmt_cpu_dev.cdev);
-release_region:
-    unregister_chrdev_region(dev_no, WMT_CPU_NR_DEVS);
-out:
-    return ret;
-}
-
-static void wmt_cpu_dev_cleanup(void)
-{
-    dev_t dev_no = MKDEV(wmt_cpu_dev_major, wmt_cpu_dev_minor);
-
-    cdev_del(&wmt_cpu_dev.cdev);
-    unregister_chrdev_region(dev_no, WMT_CPU_NR_DEVS);
-    device_destroy(wmt_cpu_class, dev_no);
-    class_destroy(wmt_cpu_class);
-}
-#else
-static int  wmt_cpu_dev_setup(void) { return 0; }
-static void wmt_cpu_dev_cleanup(void) { ; }
-#endif
+spinlock_t	wmt_cpufreq_lock;
+char	use_dvfs;
+char	use_dvfs_debug;
 
 static int wmt_init_cpufreq_table(struct wmt_dvfs_driver_data *drv_data)
 {
     int i = 0;
     struct wmt_dvfs_table *dvfs_tbl = NULL;
     struct cpufreq_frequency_table *freq_tbl = NULL;
-
-    freq_tbl = kzalloc(sizeof(struct wmt_dvfs_table) * (drv_data->tbl_num + 1),
-                                                                    GFP_KERNEL);
+    
+//    freq_tbl = kzalloc(sizeof(struct wmt_dvfs_table) * (drv_data->tbl_num + 1),
+//                                                                    GFP_KERNEL);
+    freq_tbl = kzalloc(sizeof(struct cpufreq_frequency_table) * (drv_data->tbl_num + 1),
+                                                                    GFP_KERNEL);    
     if (freq_tbl == NULL) {
 	    printk(KERN_ERR "%s: failed to allocate frequency table\n", __func__);
         return -ENOMEM;
@@ -413,7 +131,9 @@ static unsigned int wmt_getspeed(unsigned int cpu)
     if (cpu)
         return 0;
 
+    //spin_lock(&wmt_cpufreq_lock);
     freq = auto_pll_divisor(DEV_ARM, GET_FREQ, 0, 0) / 1000;
+    //spin_unlock(&wmt_cpufreq_lock);
 
     if (freq < 0)
         freq = 0;
@@ -481,13 +201,15 @@ static int get_arm_plla_param(void)
     unsigned ft, df, dr, dq, div, tmp;
 
     tmp =  *(volatile unsigned int *)PMC_PLLA;
-    ft = (tmp >> 24) & 0x07;
-    df = (tmp >> 16) & 0xFF;
-    dr = (tmp >>  8) & 0x3F;
-    dq = tmp & 0x07;
+    fq_dbg("PMC PLLA REG IS 0x%08x\n", tmp);
+
+    ft = (tmp >> 24) & 0x03; // bit24 ~ bit26
+    df = (tmp >> 16) & 0xFF; // bit16 ~ bit23
+    dr = (tmp >>  8) & 0x1F; // bit8  ~ bit12  
+    dq = tmp & 0x03;
     
     tmp = *(volatile unsigned int *)ARM_DIV_OFFSET;
-    div = tmp & 0xFF;
+    div = tmp & 0x1F;
 
     fq_dbg("ft:%d, df:%d, dr:%d, dq:%d, div:%d\n", ft, df, dr, dq, div);
     return 0;
@@ -496,78 +218,130 @@ static int get_arm_plla_param(void)
 static int wmt_change_plla_freq(unsigned target)
 {
     int ret = 0;
-    int tmp = 0;
-    int df, dr, dq, div;
-    unsigned freq = target / 1000; // Khz to Mhz
 
-    if (freq <= 1000 && freq >= 525) {
-        dr  = 1;
-        dq  = 1;
-        div = 1;
-        tmp = (1000 - (freq - freq % 25)) / 25;
-        df  = 159 - 4 * tmp;
-    } else if (freq < 525 && freq >= 325) {
-        dr  = 1;
-        div = 1;
-        dq  = 2;
-        tmp = (500 - (freq - freq % 25)) / 25;
-        df  = 159 - 8 * tmp;
-    } else if (freq >= 300) {
-        df = 95;
-        dr = 1;
-        dq = 1;
-        div = 2;
-    } else if (freq >= 275) {
-        df = 87;
-        dr = 1;
-        dq = 1;
-        div = 2;
-    } else if (freq >= 250) {
-        df = 159;
-        dr = 1;
-        dq = 2;
-        div = 2;
-    } else if (freq >= 225) {
-        df = 143;
-        dr = 1;
-        dq = 2;
-        div = 2;
-    } else if (freq >= 200) {
-        df = 127;
-        dr = 1;
-        dq = 2;
-        div = 2;
-    } else if (freq >= 175) {
-        df = 111;
-        dr = 1;
-        dq = 2;
-        div = 2;
-    } else if (freq >= 150) {
-        df = 95;
-        dr = 1;
-        dq = 1;
-        div = 4;
-    } else if (freq >= 125) { 
-        df = 159;
-        dr = 1;
-        dq = 2;
-        div = 4;
-    } else if (freq >= 100) {
-        df = 127;
-        dr = 1;
-        dq = 2;
-        div = 4;
-    } else {
-       printk(KERN_ERR "CPU freq can not be %dMhz\n", freq);
-       ret = -EINVAL;
-       return ret;
+    ret = auto_pll_divisor(DEV_ARM, SET_PLL, 1, target);
+    return ret;
+}
+
+extern void FAN5365_set_pmic_volt(unsigned int volt);
+
+static int wmt_change_plla_table(struct wmt_dvfs_table *plla_table, unsigned relation)
+{
+    int ret = 0;
+    struct plla_param plla_env;
+
+    switch (relation) {
+        case CPUFREQ_RELATION_L:
+            plla_env.plla_clk = (plla_table->freq/1000);
+            plla_env.arm_div = 1;    
+            plla_env.l2c_div = plla_table->l2c_div;   
+            plla_env.l2c_tag_div= plla_table->l2c_tag;
+            plla_env.l2c_data_div= plla_table->l2c_data;
+            plla_env.axi_div= plla_table->axi;
+            
+	    if (use_dvfs_debug)
+	      printk("change to L %dKhz\n", plla_table->freq);   
+	    
+            ret = set_plla_divisor(&plla_env);
+            /*
+            if (plla_table->vol) {
+//				printk("change to L %dmV\n", plla_table->vol);
+            	FAN5365_set_pmic_volt(plla_table->vol*10);
+		    }
+            */
+            if (plla_table->vol) {
+		if (use_dvfs_debug)
+		  printk("pllal_table = %d\n", plla_table->vol*1000);
+                regulator_set_voltage(re, plla_table->vol*1000, plla_table->vol*1000);
+	    }
+
+            break;
+        case CPUFREQ_RELATION_H:
+            /*
+		    if (plla_table->vol) {
+//				printk("change to H %dmV\n", plla_table->vol);
+            	FAN5365_set_pmic_volt(plla_table->vol*10);
+		    }
+            */
+            if (plla_table->vol) {
+		if (use_dvfs_debug)
+		  printk("pllah_table = %d\n", plla_table->vol*1000);
+                regulator_set_voltage(re, plla_table->vol*1000, plla_table->vol*1000);
+		}
+		
+						if (regulator_is_enabled(re) < 0) {
+							if (use_dvfs_debug)
+							  printk("xxx regulator is disabled\n");
+														
+							ret = -EINVAL;
+						} else {
+            
+            plla_env.plla_clk = (plla_table->freq/1000);
+            plla_env.arm_div = 1;    
+            plla_env.l2c_div = plla_table->l2c_div;   
+            plla_env.l2c_tag_div= plla_table->l2c_tag;
+            plla_env.l2c_data_div= plla_table->l2c_data;
+            plla_env.axi_div= plla_table->axi;
+	    if (use_dvfs_debug)
+	      printk("change to H %dKhz\n", plla_table->freq);
+            ret = set_plla_divisor(&plla_env);
+          	}
+
+            break;
+        default:
+            break;
     }
+    
+    return ret;
+}
 
-    ret = manu_pll_divisor(DEV_ARM, df, dr, dq, div);
+/* target is calculated by cpufreq governor, unit Khz */
+int wmt_lock_dvfs=0;
+int wmt_during_dvfs = 0;
+
+int
+wmt_suspend_target(unsigned target, unsigned relation)
+{
+    int ret = 0;
+    struct wmt_dvfs_table *dvfs_tbl = NULL;
+  
+	while(wmt_during_dvfs)
+		msleep(0);
+//    spin_lock(&wmt_cpufreq_lock);
+    
+    /* find out (freq, voltage) pair to do dvfs */
+    dvfs_tbl= wmt_recalc_target_freq(&target, relation);
+    if (dvfs_tbl == NULL) {
+        fq_dbg("Can not change to target_freq:%dKhz", target);
+        ret = -EINVAL;
+        goto out;
+    }
+    fq_dbg("recalculated target freq is %dMhz\n", target / 1000);
+
+    get_arm_plla_param();
+    ret = wmt_change_plla_freq(target);
+//    ret = wmt_change_plla_table(dvfs_tbl, relation);
+    
+    fq_dbg("change to %dKhz\n", ret / 1000);    
+    if (use_dvfs_debug)
+      printk("change to %dKhz\n", ret / 1000);        
+    
+    regulator_set_voltage(re, dvfs_tbl->vol*1000, dvfs_tbl->vol*1000);
+    get_arm_plla_param();
+
+    if (ret < 0) {
+        ret = -ENODATA;
+        fq_dbg("wmt_cpufreq: auto_pll_divisor failed\n");
+    }
+    ret = 0;
+
+out:
+//    spin_unlock(&wmt_cpufreq_lock);
     return ret;
 }
 
 
+/* target is calculated by cpufreq governor, unit Khz */
 static int
 wmt_target(struct cpufreq_policy *policy, unsigned target, unsigned relation)
 {
@@ -578,7 +352,19 @@ wmt_target(struct cpufreq_policy *policy, unsigned target, unsigned relation)
     fq_dbg("cpu freq:%dMhz now, need %s to %dMhz\n", wmt_getspeed(0) / 1000,
               (relation == CPUFREQ_RELATION_L) ? "DOWN" : "UP", target / 1000);
 
+		wmt_during_dvfs = 1;
+    //spin_lock(&wmt_cpufreq_lock);
     if (policy->cpu) {
+        ret = -EINVAL;
+        goto out;
+    }
+
+    if (wmt_lock_dvfs) {
+        ret = -EINVAL;
+        goto out;
+    }	
+	
+    if (regulator_is_enabled(re) < 0) {
         ret = -EINVAL;
         goto out;
     }
@@ -607,12 +393,17 @@ wmt_target(struct cpufreq_policy *policy, unsigned target, unsigned relation)
         ret = 0;
         goto out;
     }
+    else if (freqs.new > freqs.old)
+		relation = CPUFREQ_RELATION_H;
+    else
+		relation = CPUFREQ_RELATION_L;
 
     /* actually we just scaling CPU frequency here */
     cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
 
     get_arm_plla_param();
-    ret = wmt_change_plla_freq(target);
+//    ret = wmt_change_plla_freq(target);
+    ret = wmt_change_plla_table(dvfs_tbl, relation);
     get_arm_plla_param();
     fq_dbg("change to %dKhz\n", ret / 1000);
 
@@ -624,7 +415,9 @@ wmt_target(struct cpufreq_policy *policy, unsigned target, unsigned relation)
     cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
 
 out:
+    //	spin_unlock(&wmt_cpufreq_lock);
     fq_dbg("cpu freq scaled to %dMhz now\n\n", wmt_getspeed(0) / 1000);
+    wmt_during_dvfs = 0;
     return ret;
 }
 
@@ -674,6 +467,12 @@ static int __init wmt_cpu_init(struct cpufreq_policy *policy)
     if (0 == ret)
         cpufreq_frequency_table_get_attr(wmt_freq_tbl, policy->cpu);
 
+    /*
+     * 1. make sure current frequency be covered in cpufreq_table
+     * 2. change cpu frequency to policy-max for fast booting
+     */
+    wmt_target(policy, policy->max, CPUFREQ_RELATION_H);
+
     policy->cur = wmt_getspeed(policy->cpu);
     policy->cpuinfo.transition_latency = wmt_dvfs_drvdata.sample_rate;
     
@@ -698,6 +497,26 @@ static struct freq_attr *wmt_cpufreq_attr[] = {
         NULL,
 };
 
+#ifdef CONFIG_PM
+
+
+static int wmt_cpufreq_suspend(struct cpufreq_policy *policy)
+{
+
+	printk("xxxx wmt_cpufreq_suspend\n");
+	return 0;
+}
+
+static int wmt_cpufreq_resume(struct cpufreq_policy *policy)
+{
+	printk("xxxx wmt_cpufreq_resume\n");
+	return 0;
+}
+#else
+#define wmt_cpufreq_suspend NULL
+#define wmt_cpufreq_resume NULL
+#endif
+
 static struct cpufreq_driver wmt_cpufreq_driver = {
     .name       = "wmt_cpufreq",
     .owner      = THIS_MODULE,
@@ -708,6 +527,8 @@ static struct cpufreq_driver wmt_cpufreq_driver = {
     .get        = wmt_getspeed,
     .exit       = wmt_cpu_exit,
     .attr       = wmt_cpufreq_attr,
+		.suspend	= wmt_cpufreq_suspend,
+		.resume		= wmt_cpufreq_resume,    
 };
 
 static int __init wmt_cpufreq_check_env(void)
@@ -721,13 +542,23 @@ static int __init wmt_cpufreq_check_env(void)
     unsigned int sample_rate = 0;
     unsigned int freq = 0;
     unsigned int voltage = 0;
+    unsigned int l2c_div = 0;
+    unsigned int l2c_tag = 0;
+    unsigned int l2c_data = 0;
+    unsigned int axi = 0;
     struct wmt_dvfs_table *wmt_dvfs_tbl = NULL;
     unsigned char buf[512] = {0};
 
-    /* uboot env name is: wmt.cpufreq.param/wmt.dvfs.param, format is:
-        <Enable>:<Sample rate>:<Table_Number>:<Freq_Table>:<Voltage_Table> 
-        Example:
-        1:100000:4:[200000:1000][400000:1100][600000:1200][800000:1300] */
+    /* uboot env name is: wmt.cpufreq.param/wmt.dvfs.param, format is:                
+        <enable>:<sample_rate>:<table_number>:<[freq,voltage,l2c_div,l2c_tag,l2c_data,axi]*>
+        >        
+        Example:        
+         <enable>:<sample_rate>:<table_number>:<[freq,voltage,l2c_div,l2c_tag,l2c_data,axi]*> 
+    */
+    
+    use_dvfs = 0;
+    use_dvfs_debug = 0;
+    
     ret = wmt_getsyspara("wmt.cpufreq.param", buf, &varlen);                                                                    
     if (ret) {
         printk(KERN_INFO "Can not find uboot env wmt.cpufreq.param\n");
@@ -736,7 +567,7 @@ static int __init wmt_cpufreq_check_env(void)
     }
     fq_dbg("wmt.cpufreq.param:%s\n", buf);
 
-    sscanf(buf, "%d:%d:%d", &drv_en, &sample_rate, &tbl_num);
+    sscanf(buf, "%x:%d:%d", &drv_en, &sample_rate, &tbl_num);
     if (!drv_en) {
         printk(KERN_INFO "wmt cpufreq disaled\n");
         ret = -ENODEV;
@@ -766,15 +597,25 @@ static int __init wmt_cpufreq_check_env(void)
     ptr = buf;
     for (i = 0; i < tbl_num; i++) {
         strsep(&ptr, "[");
-        sscanf(ptr, "%d:%d]:[", &freq, &voltage);
-        wmt_dvfs_tbl[i].freq = freq;
+        sscanf(ptr, "%d,%d,%d,%d,%d,%d]:[", &freq, &voltage, &l2c_div, &l2c_tag, &l2c_data, &axi);
+        wmt_dvfs_tbl[i].freq = freq*1000;
         wmt_dvfs_tbl[i].vol  = voltage;
+        wmt_dvfs_tbl[i].l2c_div = l2c_div;
+        wmt_dvfs_tbl[i].l2c_tag  = l2c_tag;
+        wmt_dvfs_tbl[i].l2c_data = l2c_data;
+        wmt_dvfs_tbl[i].axi  = axi;        
         wmt_dvfs_tbl[i].index = i;
         INIT_LIST_HEAD(&wmt_dvfs_tbl[i].node);
         list_add_tail(&wmt_dvfs_tbl[i].node, &wmt_dvfs_drvdata.wmt_dvfs_list);
-        fq_dbg("dvfs_table[%d]: freq %dKhz, voltage %dmV\n", i, freq, voltage);
+        fq_dbg("dvfs_table[%d]: freq %dMhz, voltage %dmV l2c_div %d l2c_tag %d l2c_data %d axi %d\n", i, freq, voltage, l2c_div, l2c_tag, l2c_data, axi);
     }
+    use_dvfs = 1;
+	wmt_lock_dvfs = 0;
+	wmt_during_dvfs = 0;
 
+    if (drv_en & 0x10)
+      use_dvfs_debug = 1;    
+    
 out:
     return ret;
 }
@@ -782,18 +623,27 @@ out:
 static int __init wmt_cpufreq_driver_init(void)
 {
     int ret = 0;
+		unsigned int chip_id = 0;
+		unsigned int bondingid = 0;
 
     /* if cpufreq disabled, cpu will always run at current frequency
      * which defined in wmt.plla.param */
+    spin_lock_init(&wmt_cpufreq_lock);
     ret = wmt_cpufreq_check_env();
     if (ret) {
         printk(KERN_WARNING "wmt_cpufreq check env failed, current cpu "
                                     "frequency is %dKhz\n", wmt_getspeed(0));
         goto out;
     }
+    
+    wmt_getsocinfo(&chip_id, &bondingid);
+    
+    if (((chip_id & 0xffff0000) == (WM3481_A2_ID & 0xffff0000)) && ((chip_id & 0xffff) < (WM3481_A2_ID & 0xffff))) {
+      ret = -ENODEV;
+      goto out;
+    }
+    re = regulator_get(NULL, "wmt_corepower");
     ret = cpufreq_register_driver(&wmt_cpufreq_driver);
-
-    wmt_cpu_dev_setup();
 
 out:
     return ret;
@@ -802,7 +652,6 @@ late_initcall(wmt_cpufreq_driver_init);
 
 static void __exit wmt_cpufreq_driver_exit(void)
 {
-    wmt_cpu_dev_cleanup();
     cpufreq_unregister_driver(&wmt_cpufreq_driver);
 }
 module_exit(wmt_cpufreq_driver_exit);

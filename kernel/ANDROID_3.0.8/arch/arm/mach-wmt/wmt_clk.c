@@ -312,10 +312,18 @@ static int check_filter(int filter)
 */
 static int get_freq(enum dev_id dev, int *divisor) {
 
-	unsigned int div = 0, pmc_clk_en, freq;
-	int PLL_NO, j = 0, div_addr_offs;
+	unsigned int div = 0, pmc_clk_en, freq, div1 = 1;
+	int PLL_NO, j = 0, div_addr_offs, div_addr_offs1 = 0, PLL_NO1;
 	unsigned long long freq_llu, base = 1000000, tmp, mod;
 
+	if (dev == DEV_EBM) {
+		PLL_NO1 = calc_pll_num(DEV_DDRMC, &div_addr_offs1);
+		if (PLL_NO1 == -1) {
+			printk(KERN_INFO"device not found");
+			return -1;
+		}
+		div1 = *(volatile unsigned char *)(PMC_BASE + div_addr_offs1);
+	}
 	PLL_NO = calc_pll_num(dev, &div_addr_offs);
 	if (PLL_NO == -1) {
 		printk(KERN_INFO"device not found");
@@ -347,6 +355,7 @@ static int get_freq(enum dev_id dev, int *divisor) {
 	
 	if ((dev != DEV_SDMMC0) && (dev != DEV_SDMMC1) && (dev != DEV_SDMMC2) && (dev != DEV_SDMMC3)) {
 		div = div&0x1F;
+		div1 = div1&0x1F;
 	} else {
 		if (div & (1<<5))
 			j = 1;
@@ -356,7 +365,7 @@ static int get_freq(enum dev_id dev, int *divisor) {
 
 	freq_llu = (SRC_FREQ*GET_DIVF(tmp)) * base;
 	//printk(KERN_INFO" freq_llu =%llu\n", freq_llu);
-	tmp = GET_DIVR(tmp) * GET_DIVQ(tmp) * div;
+	tmp = GET_DIVR(tmp) * GET_DIVQ(tmp) * div * div1;
 	mod = do_div(freq_llu, tmp);
 	freq = (unsigned int)freq_llu;
 	//printk("get_freq cmd: freq=%d freq(unsigned long long)=%llu div=%llu mod=%llu\n", freq, freq_llu, tmp, mod);
@@ -366,8 +375,8 @@ static int get_freq(enum dev_id dev, int *divisor) {
 
 static int set_divisor(enum dev_id dev, int unit, int freq, int *divisor) {
 
-	unsigned int div = 0, pmc_clk_en, tmp;
-	int PLL_NO, i, j = 0, div_addr_offs, SD_MMC = 1;
+	unsigned int div = 0, pmc_clk_en, tmp, div1 = 1;
+	int PLL_NO, i, j = 0, div_addr_offs, SD_MMC = 1, div_addr_offs1 = 0, PLL_NO1;
 	unsigned long long base = 1000000, PLL, PLL_tmp, mod, div_llu, freq_target = freq, mini,tmp1;
 	if ((dev != DEV_SDMMC0) && (dev != DEV_SDMMC1) && (dev != DEV_SDMMC2) && (dev != DEV_SDMMC3))
 		SD_MMC = 0;
@@ -381,6 +390,15 @@ static int set_divisor(enum dev_id dev, int unit, int freq, int *divisor) {
 	if (PLL_NO == -2) {
 		printk(KERN_INFO"device has no divisor");
 		return -1;
+	}
+	
+	if (dev == DEV_EBM) {
+		PLL_NO1 = calc_pll_num(DEV_DDRMC, &div_addr_offs1);
+		if (PLL_NO1 == -1) {
+			printk(KERN_INFO"device not found");
+			return -1;
+		}
+		div1 = *(volatile unsigned char *)(PMC_BASE + div_addr_offs1);
 	}
 
 	if (dev == DEV_SDTV)
@@ -415,7 +433,7 @@ static int set_divisor(enum dev_id dev, int unit, int freq, int *divisor) {
 			if ((i > 1 && (i%2)) && (PLL_NO == 2))
 				continue;
 				PLL_tmp = PLL;
-				mod = do_div(PLL_tmp, div_llu*i);
+				mod = do_div(PLL_tmp, div_llu*i*div1);
 			if (PLL_tmp <= freq_target) {
 				*divisor = div = i;
 				break;
@@ -454,7 +472,7 @@ static int set_divisor(enum dev_id dev, int unit, int freq, int *divisor) {
 	return -1;
 }
 
-static int set_pll_speed(enum dev_id dev, int unit, int freq, int *divisor) {
+static int set_pll_speed(enum dev_id dev, int unit, int freq, int *divisor, int wait) {
 
 	unsigned int PLL, DIVF=1, DIVR=1, DIVQ=1;
 	unsigned int last_freq, div=1/*, filt_range, filter*/;
@@ -560,7 +578,8 @@ find:
 	check_PLL_DIV_busy();
 	/*printk(KERN_INFO"PLL0x%x, pll addr =0x%x\n", PLL, PMC_PLL + 4*PLL_NO);*/
 	*(volatile unsigned int *)(PMC_PLL + 4*PLL_NO) = PLL;
-	check_PLL_DIV_busy();
+	if (wait)
+		check_PLL_DIV_busy();
 	return last_freq;
 
 	printk(KERN_INFO"no suitable pll");
@@ -790,7 +809,7 @@ int auto_pll_divisor(enum dev_id dev, enum clk_cmd cmd, int unit, int freq)
 			return last_freq;
 		case SET_PLL:
 			divisor = 0;
-			last_freq = set_pll_speed(dev, unit, freq, &divisor);
+			last_freq = set_pll_speed(dev, unit, freq, &divisor, 1);
 			return last_freq;
 		case SET_PLLDIV:
 			divisor = 0;
@@ -902,11 +921,104 @@ int manu_pll_divisor(enum dev_id dev, int DIVF, int DIVR, int DIVQ, int dev_div)
 EXPORT_SYMBOL(manu_pll_divisor);
 
 
+int set_plla_divisor(struct plla_param *plla_env)
+{
+	int divisor = 0;
+	unsigned int plla_clk, arm_div, l2c_div, l2c_tag, l2c_data, axi_div;
+	unsigned int cpu_clk, index, old_arm_div, nand_clk;
+	
+	plla_clk = plla_env->plla_clk;
+	arm_div = plla_env->arm_div;
+	l2c_div = plla_env->l2c_div;
+	l2c_tag = plla_env->l2c_tag_div;
+	l2c_data = plla_env->l2c_data_div;
+	axi_div = plla_env->axi_div;
+	
+	/*if ((plla_clk/arm_div) < 100)
+		return -3;
+	if (((plla_clk/arm_div)/l2c_div) < 62)
+		return -4;
+	if (((plla_clk/arm_div)/l2c_tag) < 62)
+		return -5;
+	if (((plla_clk/arm_div)/l2c_data) < 62)
+		return -6;
+	if (((plla_clk/arm_div)/axi_div) < 62)
+		return -7;*/
+
+	cpu_clk = get_freq(DEV_ARM, &divisor);
+	cpu_clk >>= 20;
+	if (cpu_clk > (plla_clk/arm_div)) {
+		//change cpu from faster to slower
+		old_arm_div = *(volatile unsigned int *)(PMC_BASE + 0x300);
+		index = set_pll_speed(DEV_ARM, 1, (plla_clk*1000)/old_arm_div, &divisor, 1);
+		if (index < 0)
+			return -1;
+
+		if (*(volatile unsigned char *)(PMC_BASE + 0x300) != arm_div) {
+			*(volatile unsigned int *)(PMC_BASE + 0x300) = arm_div;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x30C) != l2c_div) {
+			*(volatile unsigned int *)(PMC_BASE + 0x30C) = l2c_div;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x3F0) != l2c_tag) {
+			*(volatile unsigned int *)(PMC_BASE + 0x3F0) = l2c_tag;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x3F4) != l2c_data) {
+			*(volatile unsigned int *)(PMC_BASE + 0x3F4) = l2c_data;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x3B0) != axi_div) {
+			*(volatile unsigned int *)(PMC_BASE + 0x3B0) = axi_div;
+			check_PLL_DIV_busy();
+		}
+	} else {
+		//change cpu from slower to faster
+		nand_clk = get_freq(DEV_NAND, &divisor);
+		if ((nand_clk*divisor) > plla_clk)
+			*(volatile unsigned int *)(PMC_BASE + 0x300) = 2;
+		else
+			*(volatile unsigned int *)(PMC_BASE + 0x300) = arm_div;
+		check_PLL_DIV_busy();
+		if (*(volatile unsigned int *)(PMC_BASE + 0x30C) != l2c_div) {
+			*(volatile unsigned int *)(PMC_BASE + 0x30C) = l2c_div;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x3F0) != l2c_tag) {
+			*(volatile unsigned int *)(PMC_BASE + 0x3F0) = l2c_tag;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x3F4) != l2c_data) {
+			*(volatile unsigned int *)(PMC_BASE + 0x3F4) = l2c_data;
+			check_PLL_DIV_busy();
+		}
+		if (*(volatile unsigned int *)(PMC_BASE + 0x3B0) != axi_div) {
+			*(volatile unsigned int *)(PMC_BASE + 0x3B0) = axi_div;
+			check_PLL_DIV_busy();
+		}
+		if ((nand_clk*divisor) > plla_clk) {
+			index = set_pll_speed(DEV_ARM, 1, (plla_clk*1000)/2, &divisor, 1);
+			if (index < 0)
+				return -1;
+			*(volatile unsigned int *)(PMC_BASE + 0x300) = arm_div;
+		} else {
+			index = set_pll_speed(DEV_ARM, 1, (plla_clk*1000)/arm_div, &divisor, 0);
+			if (index < 0)
+				return -1;
+		}
+	}
+
+	return index;
+}
+EXPORT_SYMBOL(set_plla_divisor);
+
 int wm_pmc_set(enum dev_id dev, enum power_cmd cmd)
 {
 	int retval = -1;
 	unsigned int temp = 0, base = 0, mali_val = 0;
-	unsigned int mali_off, mali_l2c_off = 0x00130620, mali_gp_off = 0x00130624;
+	unsigned int mali_off, mali_l2c_off = 0x00130620/*, mali_gp_off = 0x00130624*/;
 	mali_off = mali_l2c_off;
 
 	base = 0xfe000000;

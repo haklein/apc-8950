@@ -100,6 +100,11 @@ WonderMedia Technologies, Inc.
 #define	GPIO_SD3_WriteProtect	BIT3
 #define	GPIO_SD3_POWER			BIT6
 
+/* SDIO Power pin */
+#define SDIO_WIFI_PWR			BIT2
+#define SDIO_WIFI_INT			BIT3
+#define SOIO_WIFI_WAKE_FUN		BIT27
+
 #define	SD0_PIN		(GPIO_SD0_Clock | GPIO_SD0_Command | GPIO_SD0_WriteProtect | GPIO_SD0_Data)
 
 /* PIN share switch */

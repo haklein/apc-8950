@@ -248,7 +248,7 @@ typedef struct {
 } hdmi_cp_t;
 
 /*-------------------- EXPORTED PRIVATE VARIABLES -----------------------------*/
-#ifdef HDMI_C
+#ifdef VPP_C
 #define EXTERN
 
 const hdmi_vic_t hdmi_vic_info[HDMI_VIDEO_CODE_MAX] = {
@@ -296,6 +296,7 @@ EXTERN const hdmi_vic_t hdmi_vic_info[HDMI_VIDEO_CODE_MAX];
 
 EXTERN hdmi_cp_t *hdmi_cp;
 EXTERN int hdmi_ri_tm_cnt;
+EXTERN hdmi_info_t hdmi_info;
 
 /* EXTERN int      hdmi_xxx; *//*Example*/
 #undef EXTERN
@@ -330,6 +331,7 @@ void hdmi_set_option(unsigned int option);
 void hdmi_get_bksv(unsigned int *bksv);
 int hdmi_check_cp_dev_cnt(void);
 void hdmi_hotplug_notify(int plug_status);
+void hdmi_tx_vendor_specific_infoframe_packet(void);
 
 #ifdef	__cplusplus
 }

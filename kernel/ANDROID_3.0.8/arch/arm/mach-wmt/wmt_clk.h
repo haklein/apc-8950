@@ -122,7 +122,17 @@ DEV_PWROFF,
 DEV_PWRSTS,
 };
 
+struct plla_param {
+unsigned int plla_clk;
+unsigned int arm_div;
+unsigned int l2c_div;
+unsigned int l2c_tag_div;
+unsigned int l2c_data_div;
+unsigned int axi_div;
+};
+
 extern int auto_pll_divisor(enum dev_id dev, enum clk_cmd cmd, int unit, int freq);
 extern int manu_pll_divisor(enum dev_id dev, int DIVF, int DIVR, int DIVQ, int dev_div);
+extern int set_plla_divisor(struct plla_param *plla_env);
 extern int wmt_power_dev(enum dev_id dev, enum power_cmd cmd);
 #endif /* __WMT_CLK_H__*/

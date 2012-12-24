@@ -109,7 +109,6 @@ unsigned int govrh_set_clock(govrh_mod_t *base,unsigned int pixel_clock)
 {
 //	volatile struct govrh_regs *regs = (volatile struct govrh_regs *) base->mmio;
 	int pmc_clk = 0;
-	extern unsigned int hdmi_pixel_clock;
 
 	DBG_MSG("(govr %d,%d)\n",(base->mod == VPP_MOD_GOVRH)? 1:2,pixel_clock);
 
@@ -118,7 +117,7 @@ unsigned int govrh_set_clock(govrh_mod_t *base,unsigned int pixel_clock)
 		if( vppif_reg32_read(VPP_DVO_SEL) ){
 			auto_pll_divisor(DEV_DVO,SET_PLLDIV,0,pixel_clock);
 		}
-		hdmi_pixel_clock = pmc_clk;
+		g_vpp.hdmi_pixel_clock = pmc_clk;
 	}
 	else {
 		pmc_clk = auto_pll_divisor(DEV_DVO,SET_PLLDIV,0,pixel_clock);
@@ -678,9 +677,12 @@ void govrh_set_timing(govrh_mod_t *base,vpp_timing_t *timing)
 	volatile struct govrh_regs *regs = (volatile struct govrh_regs *) base->mmio;
 	vpp_timing_t ptr;
 	vpp_clock_t t1;
+	int tg_enable;
 
 	DBG_MSG("(govr %d)\n",(base->mod == VPP_MOD_GOVRH)? 1:2);
 
+	tg_enable = regs->tg_enable.b.enable;
+	regs->tg_enable.b.enable = 0;
 	ptr = *timing;
 	if( ptr.option & VPP_OPT_HSCALE_UP ){
 		ptr.hpixel *= 2;
@@ -695,12 +697,13 @@ void govrh_set_timing(govrh_mod_t *base,vpp_timing_t *timing)
 	}
 	DBG_DETAIL("govr %d,pix clk %d,rd cyc %d\n",(base->mod == VPP_MOD_GOVRH)? 1:2,ptr.pixel_clock,t1.read_cycle);
 
-	govrh_set_tg_enable(base,0);
 	govrh_set_tg1(base,&t1);
 	if( ptr.option & VPP_OPT_INTERLACE ){
 		vpp_clock_t t2;
 		
-		ptr = *(timing+1);
+		//ptr = *(timing+1);
+		ptr = *timing;
+		ptr.vbp += 1;
 		if( ptr.option & VPP_OPT_HSCALE_UP ){	// 480i & 576i repeat 2 pixel
 			ptr.hpixel *= 2;
 		}
@@ -712,6 +715,7 @@ void govrh_set_timing(govrh_mod_t *base,vpp_timing_t *timing)
 	govrh_set_output_format(base,(ptr.option & VPP_OPT_INTERLACE)? 1:0);
 	regs->hscale_up = (ptr.option & VPP_OPT_HSCALE_UP)? 1:0;
 	regs->vsync_offset.val = (ptr.option & VPP_OPT_INTERLACE)? ((regs->h_allpxl/2) | BIT16):0;
+	regs->tg_enable.b.enable = tg_enable;
 }
 
 void govrh_set_csc_mode(govrh_mod_t *base,vpp_csc_t mode)
@@ -721,21 +725,21 @@ void govrh_set_csc_mode(govrh_mod_t *base,vpp_csc_t mode)
 	unsigned int enable;
 	unsigned int val;
 
-	const unsigned int csc_mode_parm[VPP_CSC_MAX][9] = {
-		{0x000004a8, 0x04a80662, 0x1cbf1e70, 0x081204a8, 0x00000000, 0x00010001, 0x00000001, 0x00000003, 0x18},	// YUV2RGB_SDTV_0_255
-		{0x00000400, 0x0400057c, 0x1d351ea8, 0x06ee0400, 0x00000000, 0x00010001, 0x00000001, 0x00000001, 0x18},	// YUV2RGB_SDTV_16_235
-		{0x000004a8, 0x04a8072c, 0x1ddd1f26, 0x087604a8, 0x00000000, 0x00010001, 0x00000001, 0x00000003, 0x18},	// YUV2RGB_HDTV_0_255
-		{0x00000400, 0x04000629, 0x1e2a1f45, 0x07440400, 0x00000000, 0x00010001, 0x00000001, 0x00000001, 0x18},	// YUV2RGB_HDTV_16_235
-		{0x00000400, 0x0400059c, 0x1d251ea0, 0x07170400, 0x00000000, 0x00010001, 0x00000001, 0x00000001, 0x18},	// YUV2RGB_JFIF_0_255
-		{0x00000400, 0x0400057c, 0x1d351ea8, 0x06ee0400, 0x00010000, 0x00010001, 0x00000001, 0x00000001, 0x18},	// YUV2RGB_SMPTE170M
-		{0x00000400, 0x0400064d, 0x1e001f19, 0x074f0400, 0x00010000, 0x00010001, 0x00000001, 0x00000003, 0x18},	// YUV2RGB_SMPTE240M
-		{0x02040107, 0x1f680064, 0x01c21ed6, 0x1e8701c2, 0x00001fb7, 0x01010021, 0x00000101, 0x00000000, 0x1C},	// RGB2YUV_SDTV_0_255
-		{0x02590132, 0x1f500075, 0x020b1ea5, 0x1e4a020b, 0x00001fab, 0x01010001, 0x00000101, 0x00000000, 0x1C},	// RGB2YUV_SDTV_16_235
-		{0x027500bb, 0x1f99003f, 0x01c21ea6, 0x1e6701c2, 0x00001fd7, 0x01010021, 0x00000101, 0x00000000, 0x1C},	// RGB2YUV_HDTV_0_255
-		{0x02dc00da, 0x1f88004a, 0x020b1e6d, 0x1e25020b, 0x00001fd0, 0x01010001, 0x00000101, 0x00000000, 0x1C},	// RGB2YUV_HDTV_16_235
-		{0x02590132, 0x1f530075, 0x02001ead, 0x1e530200, 0x00001fad, 0x01010001, 0x00000101, 0x00000000, 0x1C},	// RGB2YUV_JFIF_0_255
-		{0x02590132, 0x1f500075, 0x020b1ea5, 0x1e4a020b, 0x00011fab, 0x01010101, 0x00000000, 0x00000000, 0x1C},	// RGB2YUV_SMPTE170M
-		{0x02ce00d9, 0x1f890059, 0x02001e77, 0x1e380200, 0x00011fc8, 0x01010101, 0x00000000, 0x00000000, 0x1C},	// RGB2YUV_SMPTE240M
+	const unsigned int csc_mode_parm[VPP_CSC_MAX][3] = {
+		{0x00000001, 0x00000003, 0x18},	// YUV2RGB_SDTV_0_255
+		{0x00000001, 0x00000001, 0x18},	// YUV2RGB_SDTV_16_235
+		{0x00000001, 0x00000003, 0x18},	// YUV2RGB_HDTV_0_255
+		{0x00000001, 0x00000001, 0x18},	// YUV2RGB_HDTV_16_235
+		{0x00000001, 0x00000001, 0x18},	// YUV2RGB_JFIF_0_255
+		{0x00000001, 0x00000001, 0x18},	// YUV2RGB_SMPTE170M
+		{0x00000001, 0x00000003, 0x18},	// YUV2RGB_SMPTE240M
+		{0x00000101, 0x00000000, 0x1C},	// RGB2YUV_SDTV_0_255
+		{0x00000101, 0x00000000, 0x1C},	// RGB2YUV_SDTV_16_235
+		{0x00000101, 0x00000000, 0x1C},	// RGB2YUV_HDTV_0_255
+		{0x00000101, 0x00000000, 0x1C},	// RGB2YUV_HDTV_16_235
+		{0x00000101, 0x00000000, 0x1C},	// RGB2YUV_JFIF_0_255
+		{0x00000000, 0x00000000, 0x1C},	// RGB2YUV_SMPTE170M
+		{0x00000000, 0x00000000, 0x1C},	// RGB2YUV_SMPTE240M
 	};
 
 	DBG_DETAIL("(govr %d,%d)\n",(base->mod == VPP_MOD_GOVRH)? 1:2,mode);
@@ -784,17 +788,17 @@ void govrh_set_csc_mode(govrh_mod_t *base,vpp_csc_t mode)
 #ifdef WMT_FTBLK_HDMI
 		regs->yuv2rgb.b.hdmi = 0;
 #endif
-		return;
+		mode = VPP_CSC_YUV2RGB_JFIF_0_255;	// for internal color bar (YUV base)
 	}
 
-	regs->dmacsc_coef0 = csc_mode_parm[mode][0];
-	regs->dmacsc_coef1 = csc_mode_parm[mode][1];
-	regs->dmacsc_coef2 = csc_mode_parm[mode][2];
-	regs->dmacsc_coef3 = csc_mode_parm[mode][3];
-	regs->dmacsc_coef4 = csc_mode_parm[mode][4];
-	regs->dmacsc_coef5 = csc_mode_parm[mode][5];
-	regs->dmacsc_coef6 = csc_mode_parm[mode][6];
-	regs->csc_mode.val = csc_mode_parm[mode][7];
+	regs->dmacsc_coef0 = vpp_csc_parm[mode][0];
+	regs->dmacsc_coef1 = vpp_csc_parm[mode][1];
+	regs->dmacsc_coef2 = vpp_csc_parm[mode][2];
+	regs->dmacsc_coef3 = vpp_csc_parm[mode][3];
+	regs->dmacsc_coef4 = vpp_csc_parm[mode][4];
+	regs->dmacsc_coef5 = vpp_csc_parm[mode][5];
+	regs->dmacsc_coef6 = csc_mode_parm[mode][0];
+	regs->csc_mode.val = csc_mode_parm[mode][1];
 
 	/* enable bit0:DVO, bit1:VGA, bit2:DISP, bit3:LVDS, bit4:HDMI */
 #ifdef WMT_FTBLK_LVDS
@@ -805,7 +809,7 @@ void govrh_set_csc_mode(govrh_mod_t *base,vpp_csc_t mode)
 #endif
 	val = regs->yuv2rgb.val & ~0x1F;
 	enable = enable & 0x3;
-	val |= (csc_mode_parm[mode][8] | enable);
+	val |= (csc_mode_parm[mode][2] | enable);
 	regs->yuv2rgb.val = val;
 }
 
@@ -823,12 +827,15 @@ void govrh_set_framebuffer(govrh_mod_t *base,vdo_framebuf_t *fb)
 void govrh_get_framebuffer(govrh_mod_t *base,vdo_framebuf_t *fb)
 {
 	volatile struct govrh_regs *regs = (volatile struct govrh_regs *) base->mmio;
+	vpp_clock_t clock;
 
 	DBG_DETAIL("(govr %d)\n",(base->mod == VPP_MOD_GOVRH)? 1:2);
 
 	govrh_get_fb_addr(base,&fb->y_addr,&fb->c_addr);
 	fb->col_fmt = govrh_get_color_format(base);
 	govrh_get_fb_info(base,&fb->fb_w, &fb->img_w, &fb->h_crop, &fb->v_crop);
+	govrh_get_tg(base,&clock);
+	fb->fb_h = fb->img_h = clock.end_line_of_active - clock.begin_line_of_active;
 	fb->flag = (regs->srcfmt)? VDO_FLAG_INTERLACE:0;
 }
 
@@ -1241,7 +1248,7 @@ void govrh_init(void *base)
 	
 	govrh_set_reg_update(base,VPP_FLAG_ENABLE);
 	govrh_set_tg_enable(base,VPP_FLAG_ENABLE);
-	govrh_set_MIF_enable(base,VPP_FLAG_ENABLE);
+//	govrh_set_MIF_enable(base,VPP_FLAG_ENABLE);
 	govrh_set_int_enable(base,VPP_FLAG_ENABLE,mod_p->int_catch);
 }
 

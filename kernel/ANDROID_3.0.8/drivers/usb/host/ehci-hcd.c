@@ -129,6 +129,7 @@ MODULE_PARM_DESC(hird, "host initiated resume duration, +1 for each 75us\n");
 extern unsigned int usb_storage_id;
 extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);	
 unsigned int usb_param[2] = {0xff};
+unsigned char uhcd_sus = 0;
 
 static void
 timer_action(struct ehci_hcd *ehci, enum ehci_timer_action action)
@@ -562,6 +563,12 @@ static int ehci_init(struct usb_hcd *hcd)
 	char usb_env_val[20] = "0";
 	int varlen = 20;	
 	
+	char usb_env_pmc_name[] = "wmt.pmc.param";
+	char usb_env_pmc_val[40] = "0";
+	int varpmclen = 40;	
+	unsigned int usb_pmc_param[4];
+	
+	
 	spin_lock_init(&ehci->lock);
 
 	/*
@@ -679,6 +686,22 @@ static int ehci_init(struct usb_hcd *hcd)
 				usb_storage_id=0;  //disable
  			}		
 	}	
+	
+	if(wmt_getsyspara(usb_env_pmc_name, usb_env_pmc_val, &varpmclen) == 0) {						
+			sscanf(usb_env_pmc_val,"%X:%X:%X:%X", &usb_pmc_param[0],&usb_pmc_param[1], &usb_pmc_param[2],&usb_pmc_param[3]);
+			//printk("usb_param[0]  =%x ,usb_param[1]=%x \n",usb_param[0],usb_param[1]);
+			if (usb_pmc_param[0]) {	
+				if(usb_pmc_param[1] & 0x00300000) {
+					uhcd_sus = 1;	
+					//printk("usb_storage_id  =%x , it should be small than or equal  4 .\n",usb_storage_id);
+				} else {
+						uhcd_sus = 0;// default port B
+				}
+			} else {			
+				uhcd_sus=0;  //disable
+ 			}		
+	}		
+	
 	/* Accept arbitrarily long scatter-gather lists */
 	if (!(hcd->driver->flags & HCD_LOCAL_MEM))
 		hcd->self.sg_tablesize = ~0;

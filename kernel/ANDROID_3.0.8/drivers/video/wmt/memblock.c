@@ -2259,7 +2259,7 @@ static int mb_mmap(struct file *filp, struct vm_area_struct *vma)
 	}
 
 	vma->vm_flags |= VM_IO | VM_RESERVED;
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 	if (io_remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
 			     vma->vm_end - vma->vm_start, vma->vm_page_prot)){
 		spin_unlock_irqrestore(&mb_ioctl_lock, flags);

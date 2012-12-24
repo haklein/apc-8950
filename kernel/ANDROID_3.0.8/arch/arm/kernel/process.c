@@ -31,6 +31,7 @@
 #include <linux/random.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/console.h>
+#include <linux/cpufreq.h>
 
 #include <asm/cacheflush.h>
 #include <asm/processor.h>
@@ -128,10 +129,19 @@ void arm_machine_flush_console(void)
 }
 #endif
 
+extern int wmt_suspend_target(unsigned, unsigned);
+extern char use_dvfs;
+extern int wmt_lock_dvfs;
+
 void arm_machine_restart(char mode, const char *cmd)
 {
 	unsigned int tmp, tmp1 = 0x100000;
-
+	
+	if (use_dvfs) {
+	  wmt_lock_dvfs = 1;
+	  wmt_suspend_target(0, CPUFREQ_RELATION_L);	
+	}
+	
 	/* Flush the console to make sure all the relevant messages make it
 	 * out to the console drivers */
 	arm_machine_flush_console();

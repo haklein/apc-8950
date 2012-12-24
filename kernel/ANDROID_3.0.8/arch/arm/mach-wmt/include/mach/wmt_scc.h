@@ -36,7 +36,7 @@ WonderMedia Technologies, Inc.
 /*
  * Address
  */
-#define SCC_VT8500_ID_ADDR                  (0x0000+SYSTEM_CFG_CTRL_BASE_ADDR)
+#define SCC_CHIP_ID_ADDR                    (0x0000+SYSTEM_CFG_CTRL_BASE_ADDR)
 
 #define SCC_DMA_REQ0_CSR_ADDR               (0x0020+SYSTEM_CFG_CTRL_BASE_ADDR)
 #define SCC_DMA_REQ1_CSR_ADDR               (0x0021+SYSTEM_CFG_CTRL_BASE_ADDR)
@@ -73,7 +73,7 @@ WonderMedia Technologies, Inc.
 /*
  * Registers
  */
-#define SCC_VT8500_ID_REG                   REG32_PTR(0x0000+SYSTEM_CFG_CTRL_BASE_ADDR)
+#define SCC_CHIP_ID_REG                     REG32_PTR(0x0000+SYSTEM_CFG_CTRL_BASE_ADDR)
 /* Reserved 0x04 ~ 0x1F */
 #define SCC_DMA_REQ0_CSR_REG                REG8_PTR(0x0020+SYSTEM_CFG_CTRL_BASE_ADDR)
 #define SCC_DMA_REQ1_CSR_REG                REG8_PTR(0x0021+SYSTEM_CFG_CTRL_BASE_ADDR)
@@ -112,7 +112,7 @@ WonderMedia Technologies, Inc.
 /*
  * VAL Registers
  */
-#define SCC_VT8500_ID_VAL                   REG32_VAL(0x0000+SYSTEM_CFG_CTRL_BASE_ADDR)
+#define SCC_CHIP_ID_VAL                     REG32_VAL(0x0000+SYSTEM_CFG_CTRL_BASE_ADDR)
 /* Reserved 0x04 ~ 0x1F */
 #define SCC_DMA_REQ0_CSR_VAL                REG8_VAL(0x0020+SYSTEM_CFG_CTRL_BASE_ADDR)
 #define SCC_DMA_REQ1_CSR_VAL                REG8_VAL(0x0021+SYSTEM_CFG_CTRL_BASE_ADDR)
@@ -148,18 +148,17 @@ WonderMedia Technologies, Inc.
 #define SCC_DMA_REQ31_CSR_VAL               REG8_VAL(0x003F+SYSTEM_CFG_CTRL_BASE_ADDR)
 
 /*
- *  SCC_VT8500_ID_REG
- *  VT8500 ID
+ *  SCC_CHIP_ID_REG
  *
  */
 #define SCC_ID_PART_NUMBER_MASK             0xFFFF0000
 #define SCC_ID_MAJOR_MASK                   0x0000FF00
 #define SCC_ID_METAL_MASK                   0x000000FF
-#define SCC_VT8500_ID_MASK                  0xFFFFFFFF
+#define SCC_CHIP_ID_MASK                    0xFFFFFFFF
 #define SCC_ID_DEFAULT_PART_NUMBER          0x33000000
 #define SCC_ID_MAJOR_01                     0x00000100
 #define SCC_ID_METAL_01                     0x00000001
-#define SCC_VT8500_ID_01                    (SCC_ID_DEFAULT_PART_NUMBER|SCC_ID_MAJOR_01|SCC_ID_METAL_01)
+#define SCC_CHIP_ID_01                      (SCC_ID_DEFAULT_PART_NUMBER|SCC_ID_MAJOR_01|SCC_ID_METAL_01)
 
 /*
  *  SCC_DMA_REQX_CSR_REG

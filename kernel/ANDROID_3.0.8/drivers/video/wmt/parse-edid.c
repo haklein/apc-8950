@@ -96,12 +96,12 @@ static char * get_vendor_sign(char * block,char *sign)
     return sign;
 } /* End of get_vendor_sign() */
 
-static char * get_monitor_name(char * block )
+static char * get_monitor_name(char * block,char *name)
 {
     #define DESCRIPTOR_DATA         5
 
     char *ptr = block + DESCRIPTOR_DATA;
-    static char name[ 13 ];
+//    static char name[ 13 ];
     unsigned i;
 
 
@@ -210,10 +210,11 @@ static int parse_timing_description(char* dtd,edid_info_t *info)
 				fps = PIXEL_CLOCK/(vtotal*htotal);
 				if( fps == 59 ) 
 					fps = 60;
+				//if( INTERLACED ) t->pixel_clock *= 2;
 				t->option = VPP_SET_OPT_FPS(t->option,fps);
 				t->option |= INTERLACED? VPP_OPT_INTERLACE:0;
-				t->option |= HSYNC_POSITIVE? VPP_DVO_SYNC_POLAR_HI:0;
-				t->option |= VSYNC_POSITIVE? VPP_DVO_VSYNC_POLAR_HI:0;
+				t->option |= HSYNC_POSITIVE? (VPP_DVO_SYNC_POLAR_HI+VPP_VGA_HSYNC_POLAR_HI):0;
+				t->option |= VSYNC_POSITIVE? (VPP_DVO_VSYNC_POLAR_HI+VPP_VGA_VSYNC_POLAR_HI):0;
 				
 				if( vout_check_ratio_16_9(H_ACTIVE,V_ACTIVE) ){
 					info->option |= EDID_OPT_16_9;
@@ -404,7 +405,7 @@ static int edid_parse_v1(char * edid,edid_info_t *info)
     for( i = 0; i < NO_DETAILED_TIMING_DESCRIPTIONS; i++,
 	     block += DETAILED_TIMING_DESCRIPTION_SIZE ) {
         if ( block_type( block ) == MONITOR_NAME ) {
-	        monitor_name = get_monitor_name( block );
+	        monitor_name = get_monitor_name( block,monitor_alt_name );
 	        break;
 	    }
     }
@@ -457,9 +458,10 @@ static int edid_parse_CEA(char *edid,edid_info_t *info)
 	char *block,*block_end;
 	char checksum = 0;
 	int i,len;
-	unsigned int pixclk, hpixel, hporch, vpixel, vporch, fps;
 	char temp;
 	int index;
+	vpp_timing_t *p;
+	unsigned int fps;
 	
 	if((edid[0]!=0x2) || (edid[1]!=0x3)){
 		return -1;
@@ -666,20 +668,30 @@ static int edid_parse_CEA(char *edid,edid_info_t *info)
 	block = edid + edid[2];
 	len = (128 - edid[2]) / 18;
 	for(i=0; i<len; i++, block += 18 ){
-		pixclk = ((block[1]<<8)+block[0])*10000;
-		if( pixclk == 0 ) break;
-		hpixel = ((block[4]&0xF0)<<4)+block[2];
-		hporch = ((block[4]&0x0F)<<8)+block[3];
-		vpixel = ((block[7]&0xF0)<<4)+block[5];
-		vporch = ((block[7]&0x0F)<<8)+block[6];
-		fps = pixclk / ((hpixel+hporch)*(vpixel+vporch));
-		if( block[17] & 0x80 ) vpixel *= 2;
+		p = &info->cea_timing[i];
+		if( (p->pixel_clock = ((block[1]<<8)+block[0])*10000) == 0 ){
+			break;
+		}
+		p->hpixel = ((block[4]&0xF0)<<4)+block[2];
+		p->hbp = ((block[4]&0x0F)<<8)+block[3];		// h porch
+		p->vpixel = ((block[7]&0xF0)<<4)+block[5];
+		p->vbp = ((block[7]&0x0F)<<8)+block[6];		// v porch
+		fps = p->pixel_clock / ((p->hpixel+p->hbp)*(p->vpixel+p->vbp));
+		//if( block[17] & 0x80 ) p->pixel_clock *= 2;
 		if( fps == 59 ) fps = 60;
-		DBGMSG("\t%dx%d%s@%d,clk %d\n",hpixel,vpixel,(block[17]&0x80)?"I":"P",fps,pixclk);
-		info->cea_timing[i].resx = hpixel;
-		info->cea_timing[i].resy = vpixel;
-		info->cea_timing[i].freq = fps;
-		info->cea_timing[i].freq |= (block[17]&0x80)?EDID_TMR_INTERLACE:0;
+		p->hfp = ((block[11]&0xC0)<<2)+block[8];
+		p->hsync = ((block[11]&0x30)<<4)+block[9];
+		p->hbp = p->hbp - p->hfp - p->hsync;
+		p->vfp = ((block[11]&0x0C)<<2)+((block[10]&0xF0)>>4);
+		p->vsync = ((block[11]&0x03)<<4)+(block[10]&0x0F);
+		p->vbp = p->vbp - p->vfp - p->vsync;
+		p->option = VPP_SET_OPT_FPS(p->option,fps);
+		p->option |= (block[17]&0x80)? VPP_OPT_INTERLACE:0;
+		p->option |= (block[17]&0x04)? VPP_DVO_VSYNC_POLAR_HI:0;
+		p->option |= (block[17]&0x02)? VPP_DVO_SYNC_POLAR_HI:0;
+		DBGMSG("\t%dx%d%s@%d,clk %d\n",p->hpixel,p->vpixel,(block[17]&0x80)?"I":"P",fps,p->pixel_clock);
+		DBGMSG("\t\tH bp %d,sync %d,fp %d\n",p->hbp,p->hsync,p->hfp);
+		DBGMSG("\t\tV bp %d,sync %d,fp %d\n",p->vbp,p->vsync,p->vfp);
 	}
 	return 0;
 }
@@ -755,15 +767,87 @@ int edid_parse(char *edid,edid_info_t *info)
 	return info->option;
 }
 
-int edid_find_support(edid_info_t *info,unsigned int resx,unsigned int resy,int freq)
+int edid_find_support(edid_info_t *info,unsigned int resx,unsigned int resy,int freq,vpp_timing_t **timing)
 {
 	int ret;
 	int i;
 
 	ret = 0;
+	*timing = 0;
 
 	if( !info )
 		return 0;
+
+	// find cea timing
+	for(i=0;i<6;i++){
+		unsigned int option;
+		unsigned int vpixel;
+		
+		if( info->cea_timing[i].pixel_clock == 0 )
+			continue;
+
+		option = VPP_GET_OPT_FPS(info->cea_timing[i].option);
+		vpixel = info->cea_timing[i].vpixel;
+		if( info->cea_timing[i].option & VPP_OPT_INTERLACE ){
+			option |= EDID_TMR_INTERLACE;
+			vpixel *= 2;
+		}
+		if( (resx == info->cea_timing[i].hpixel) && (resy == vpixel) ){
+			if( freq == option ){
+				*timing = &info->cea_timing[i];
+				ret = 4;
+				goto find_end;
+			}
+		}
+	}
+
+	// find vic timing
+	for(i=0;i<64;i++){
+		int vic;
+		int interlace;
+		
+		if( (info->cea_vic[i/8] & (0x1 << (i%8))) == 0 ){
+			continue;
+		}
+
+		if( i >= HDMI_VIDEO_CODE_MAX )
+			continue;
+
+		vic = i;
+		if( (resx == hdmi_vic_info[vic].resx) && (resy == hdmi_vic_info[vic].resy) ){
+			if( (freq & EDID_TMR_FREQ) != hdmi_vic_info[vic].freq ){
+				continue;
+			}
+			interlace = (freq & EDID_TMR_INTERLACE)? HDMI_VIC_INTERLACE:HDMI_VIC_PROGRESS;
+			if( (hdmi_vic_info[vic].option & HDMI_VIC_INTERLACE) == interlace ){
+				ret = 5;
+				goto find_end;
+			}
+		}
+	}
+
+	// find detail timing
+	for(i=0;i<4;i++){
+		unsigned int option;
+		unsigned int vpixel;
+		
+		if( info->detail_timing[i].pixel_clock == 0 )
+			continue;
+
+		option = VPP_GET_OPT_FPS(info->detail_timing[i].option);
+		vpixel = info->detail_timing[i].vpixel;
+		if( info->detail_timing[i].option & VPP_OPT_INTERLACE ){
+			option |= EDID_TMR_INTERLACE;
+			vpixel *= 2;
+		}
+		if( (resx == info->detail_timing[i].hpixel) && (resy == vpixel) ){
+			if( freq == option ){
+				*timing = &info->detail_timing[i];
+				ret = 3;
+				goto find_end;
+			}
+		}
+	}
 
 	// find established timing
 	if( info->establish_timing ){
@@ -791,59 +875,6 @@ int edid_find_support(edid_info_t *info,unsigned int resx,unsigned int resy,int 
 		}
 	}
 
-	// find detail timing
-	for(i=0;i<4;i++){
-		unsigned int option;
-		
-		if( info->detail_timing[i].pixel_clock == 0 )
-			continue;
-
-		option = VPP_GET_OPT_FPS(info->detail_timing[i].option);
-		option |= (info->detail_timing[i].option & VPP_OPT_INTERLACE)? EDID_TMR_INTERLACE:0;
-		if( (resx == info->detail_timing[i].hpixel) && (resy == info->detail_timing[i].vpixel) ){
-			if( freq == option ){
-				ret = 3;
-				goto find_end;
-			}
-		}
-	}
-
-	// find cea timing
-	for(i=0;i<6;i++){
-		if( info->cea_timing[i].resx == 0 )
-			continue;
-		if( (resx == info->cea_timing[i].resx) && (resy == info->cea_timing[i].resy) ){
-			if( freq == info->cea_timing[i].freq ){
-				ret = 4;
-				goto find_end;
-			}
-		}
-	}
-
-	// find vic timing
-	for(i=0;i<64;i++){
-		int vic;
-		int interlace;
-		
-		if( (info->cea_vic[i/8] & (0x1 << (i%8))) == 0 ){
-			continue;
-		}
-
-		if( i >= HDMI_VIDEO_CODE_MAX )
-			continue;
-
-		vic = i;
-		if( (resx == hdmi_vic_info[vic].resx) && (resy == hdmi_vic_info[vic].resy) ){
-			if( (freq & EDID_TMR_FREQ) != hdmi_vic_info[vic].freq ){
-				continue;
-			}
-			interlace = (freq & EDID_TMR_INTERLACE)? HDMI_VIC_INTERLACE:HDMI_VIC_PROGRESS;
-			if( (hdmi_vic_info[vic].option & HDMI_VIC_INTERLACE) == interlace ){
-				ret = 5;
-				break;
-			}
-		}
-	}
 find_end:
 #if 0
 	if( (resx == 1920) && (resy==1080) && !(freq & EDID_TMR_INTERLACE) ){
@@ -855,7 +886,7 @@ find_end:
 		ret = 0;
 	}
 #endif
-//	printk("[EDID] %s support %dx%d@%d%s(ret %d)\n",(ret)? "":"No",resx,resy,freq & EDID_TMR_FREQ,(freq & EDID_TMR_INTERLACE)?"I":"P",ret);
+//	DPRINT("[EDID] %s support %dx%d@%d%s(ret %d)\n",(ret)? "":"No",resx,resy,freq & EDID_TMR_FREQ,(freq & EDID_TMR_INTERLACE)?"I":"P",ret);
 	return ret;
 }
 

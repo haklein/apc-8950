@@ -24,6 +24,7 @@
 #include <linux/suspend.h>
 #include <linux/syscore_ops.h>
 #include <trace/events/power.h>
+#include <linux/cpufreq.h>
 
 #include "power.h"
 
@@ -137,12 +138,19 @@ void __attribute__ ((weak)) arch_suspend_enable_irqs(void)
 	local_irq_enable();
 }
 
+
+extern void pmc_disable_save_wakeup_events(void);
+extern void pmc_enable_wakeup_restore_events(void);
+extern unsigned int var_wakeup_sts;
+extern unsigned int var_during_suspend;
 /**
  *	suspend_enter - enter the desired system sleep state.
  *	@state:		state to enter
  *
  *	This function should be called after devices have been suspended.
  */
+extern int wmt_suspend_target(unsigned, unsigned);
+extern char use_dvfs; 
 static int suspend_enter(suspend_state_t state)
 {
 	int error;
@@ -158,6 +166,9 @@ static int suspend_enter(suspend_state_t state)
 		printk(KERN_ERR "PM: Some devices failed to power down\n");
 		goto Platform_finish;
 	}
+
+	if (use_dvfs)
+	  wmt_suspend_target(0, CPUFREQ_RELATION_L);
 
 	if (suspend_ops->prepare_late) {
 		error = suspend_ops->prepare_late();
@@ -208,6 +219,12 @@ static int suspend_enter(suspend_state_t state)
  *				    sleep state.
  *	@state:		  state to enter
  */
+
+extern int wmt_trigger_resume_kpad;
+extern int wmt_trigger_resume_notify;
+extern void wmt_resume_kpad(void);
+extern void wmt_resume_notify(void);
+
 int suspend_devices_and_enter(suspend_state_t state)
 {
 	int error;
@@ -216,6 +233,9 @@ int suspend_devices_and_enter(suspend_state_t state)
 		return -ENOSYS;
 
 	trace_machine_suspend(state);
+	var_wakeup_sts = 0;
+	var_during_suspend = 1;
+	pmc_disable_save_wakeup_events();
 	if (suspend_ops->begin) {
 		error = suspend_ops->begin(state);
 		if (error)
@@ -237,6 +257,17 @@ int suspend_devices_and_enter(suspend_state_t state)
 	error = suspend_enter(state);
 
  Resume_devices:
+ 
+	if (wmt_trigger_resume_kpad){
+	  wmt_trigger_resume_kpad=0;
+	  wmt_resume_kpad();
+	}
+	if (wmt_trigger_resume_notify){
+	  wmt_trigger_resume_notify=0;
+	  wmt_resume_notify();
+	}
+
+ 
 	suspend_test_start();
 	dpm_resume_end(PMSG_RESUME);
 	suspend_test_finish("resume devices");
@@ -246,6 +277,8 @@ int suspend_devices_and_enter(suspend_state_t state)
  Close:
 	if (suspend_ops->end)
 		suspend_ops->end();
+	pmc_enable_wakeup_restore_events();
+	var_during_suspend = 0;
 	trace_machine_suspend(PWR_EVENT_EXIT);
 	return error;
 

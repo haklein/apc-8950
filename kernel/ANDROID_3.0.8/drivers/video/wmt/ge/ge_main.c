@@ -36,9 +36,8 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 
+#include "com-ge.h"
 #include "ge_accel.h"
-#include "ge_ioctl.h"
-#include "gmp.h"
 
 #define GMP
 #define MALI
@@ -59,7 +58,7 @@ extern int vpp_set_par(struct fb_info *info);
 struct ge_param_s {
 	int enabled;
 	int buflen1; /* Frame buffer memory */
-	int buflen2; /* Internal buffer */
+	int buflen2; /* GMP */
 	int options; /* options */
 };
 
@@ -270,14 +269,25 @@ static int gefb_pan_display(struct fb_var_screeninfo *var,
 }
 
 #ifdef MALI
-#define GET_UMP_SECURE_ID _IOWR('m', 310, unsigned int)
+typedef unsigned int ump_secure_id;
+#define UMP_INVALID_SECURE_ID    ((ump_secure_id)-1)
+#define GET_UMP_SECURE_ID        _IOWR('m', 310, unsigned int)
+#define GET_UMP_SECURE_ID_BUF1   _IOWR('m', 310, unsigned int)
+#define GET_UMP_SECURE_ID_BUF2   _IOWR('m', 311, unsigned int)
 extern unsigned int mali_ump_secure_id;
+extern unsigned int (*mali_get_ump_secure_id)(unsigned int addr, unsigned int size);
+/*
+extern void         (*mali_put_ump_secure_id)(unsigned int ump_id);
+*/
 #endif /* MALI */
 
 static int gefb_ioctl(struct fb_info *info, unsigned int cmd,
 			  unsigned long arg)
 {
 	int retval = 0;
+#ifdef MALI
+	ump_secure_id ump_id;
+#endif /* MALI */
 
 	if (_IOC_TYPE(cmd) == GEIO_MAGIC)
 		return ge_ioctl(info, cmd, arg);
@@ -287,8 +297,19 @@ static int gefb_ioctl(struct fb_info *info, unsigned int cmd,
 		ge_vo_wait_vsync();
 		break;
 #ifdef MALI
+	/*
 	case GET_UMP_SECURE_ID:
 		return put_user((unsigned int) mali_ump_secure_id,
+				(unsigned int __user *) arg);
+	*/
+	case GET_UMP_SECURE_ID_BUF1:
+	case GET_UMP_SECURE_ID_BUF2:
+		if (mali_get_ump_secure_id)
+			ump_id = (*mali_get_ump_secure_id)(info->fix.smem_start,
+							   info->fix.smem_len);
+		else
+			ump_id = UMP_INVALID_SECURE_ID;
+		return put_user((unsigned int) ump_id,
 				(unsigned int __user *) arg);
 #endif /* MALI */
 	default:
@@ -308,6 +329,57 @@ int gefb_sync(struct fb_info *info)
 	return ge_sync(info);
 }
 
+static int gefb_mmap(struct fb_info *info, struct vm_area_struct *vma)
+{
+	unsigned long off;
+	unsigned long start;
+	u32 len;
+	int ismmio = 0;
+
+	if (!info)
+		return -ENODEV;
+	if (vma->vm_pgoff > (~0UL >> PAGE_SHIFT))
+		return -EINVAL;
+	off = vma->vm_pgoff << PAGE_SHIFT;
+
+	/* frame buffer memory */
+	start = info->fix.smem_start;
+	len = PAGE_ALIGN((start & ~PAGE_MASK) + info->fix.smem_len);
+	if (off >= len) {
+		/* memory mapped io */
+		off -= len;
+		/*
+		if (info->var.accel_flags) {
+			return -EINVAL;
+		}
+		*/
+		start = info->fix.mmio_start;
+		len = PAGE_ALIGN((start & ~PAGE_MASK) + info->fix.mmio_len);
+		ismmio = 1;
+	}
+	start &= PAGE_MASK;
+	if ((vma->vm_end - vma->vm_start + off) > len)
+		return -EINVAL;
+	off += start;
+	vma->vm_pgoff = off >> PAGE_SHIFT;
+	/* This is an IO map - tell maydump to skip this VMA */
+	vma->vm_flags |= VM_IO | VM_RESERVED;
+	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+
+	if (ismmio)
+		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	else {
+//		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+		vma->vm_page_prot = __pgprot_modify(vma->vm_page_prot, L_PTE_MT_MASK,
+			L_PTE_MT_BUFFERABLE | L_PTE_MT_WRITEBACK);
+	}
+
+	if (io_remap_pfn_range(vma, vma->vm_start, off >> PAGE_SHIFT,
+			     vma->vm_end - vma->vm_start, vma->vm_page_prot))
+		return -EAGAIN;
+	return 0;
+}
+
 static struct fb_ops gefb_ops = {
 	.owner          = THIS_MODULE,
 	.fb_open        = gefb_open,
@@ -323,6 +395,7 @@ static struct fb_ops gefb_ops = {
 	.fb_cursor      = gefb_hw_cursor,
 	.fb_ioctl       = gefb_ioctl,
 	.fb_sync	= gefb_sync,
+	.fb_mmap	= gefb_mmap,
 };
 
 static int __init gefb_setup(char *options)
@@ -409,6 +482,10 @@ static int __init gefb_probe(struct platform_device *dev)
 	unsigned int smem_len;
 	unsigned int len;
 	unsigned int min_smem_len;
+#ifdef GMP
+	unsigned int gmp_start;
+	unsigned int gmp_len;
+#endif /* GMP */
 
 	/* Allocate fb_info and par.*/
 	info = framebuffer_alloc(sizeof(unsigned int) * 16, &dev->dev);
@@ -452,34 +529,47 @@ static int __init gefb_probe(struct platform_device *dev)
 
 #if APPEND_MEMBLK
 	len = get_mbsize() << 20;
-	if (smem_len > (min_smem_len + len))
-		smem_len -= len;
+	if (smem_len < (min_smem_len + len)) {
+		printk(KERN_ERR "%s: out-of-memory. (%d bytes)\n",
+			__func__, (int)(smem_len - min_smem_len - len));
+		return -EIO;
+	}
+	smem_len -= len;
 #endif /* APPEND_MEMBLK */
 
 	/* Set frame buffer region */
 	get_ge_param(&ge_param);
+
+#ifdef GMP
+	gmp = NULL;
+	len = ge_param.buflen2;
+	if (len > 0 && smem_len >= len) {
+		gmp_start = smem_start;
+		gmp_len = len;
+	} else {
+		gmp_start = 0;
+		gmp_len = 0;
+	}
+	if (gmp_start && gmp_len) {
+		smem_len -= len;
+		smem_start += len;
+	} else {
+		printk(KERN_INFO "gmp is disabled. (%d bytes)\n", len);
+	}
+#endif /* GMP */
 
 	info->fix.smem_start = smem_start;
 
 	if (ge_param.buflen1 < 0)
 		ge_param.buflen1 = smem_len;
 
-	info->fix.smem_len = ge_param.buflen1;
+	if (smem_len > ge_param.buflen1)
+		smem_len = ge_param.buflen1;
+
+	info->fix.smem_len = smem_len;
 
 	/* Set options */
 	ge_options = ge_param.options;
-
-#ifdef GMP
-	/* Use fbdev's invisible area */
-	if (smem_len >= (min_smem_len + (4 << GMP_SHIFT))) {
-		smem_start += min_smem_len;
-		smem_len -= min_smem_len;
-		gmp_set_log_level(GMP_LOG_ERR);
-		register_gmp_device(smem_start, smem_len);
-		gmp = create_gmp(smem_start, smem_len);
-	} else
-		gmp = NULL;
-#endif /* GMP */
 
 	if (!request_mem_region(info->fix.smem_start,
 		info->fix.smem_len, "gefb")) {
@@ -560,6 +650,13 @@ static int __init gefb_probe(struct platform_device *dev)
         extern void run_boot_animation(struct fb_info *info);
         run_boot_animation(info);
     }
+#endif
+
+#ifdef GMP
+	/* Initialize GMP without destroying U-Boot logo */
+	gmp_set_log_level(GMP_LOG_ERR);
+	register_gmp_device(gmp_start, gmp_len);
+	gmp = create_gmp(gmp_start, gmp_len);
 #endif
 
 	return 0;

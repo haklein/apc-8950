@@ -238,6 +238,8 @@ void async_synchronize_full(void)
 {
 	do {
 		async_synchronize_cookie(next_cookie);
+		if (!list_empty(&async_pending))
+		  schedule();
 	} while (!list_empty(&async_running) || !list_empty(&async_pending));
 }
 EXPORT_SYMBOL_GPL(async_synchronize_full);

@@ -28,13 +28,13 @@
 #define __KERNEL__
 #endif
 
-#include "ge_regs.h"
+#include "com-ge.h"
 
 #define GE_DEBUG 0
 #define FB_ACCEL_WMT 0x8710
-#define V_MAX 2048
-#define H_MAX 2048
-#define GE_FB_NUM 3
+#define MAX_XRES 1920
+#define MAX_YRES 1080
+#define GE_FB_NUM 4
 
 extern struct task_struct *ge_sem_owner;
 

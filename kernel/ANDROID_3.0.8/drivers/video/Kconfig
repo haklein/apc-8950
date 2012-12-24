@@ -270,6 +270,18 @@ config FB_WMT
 	  If you plan to use the VGA/DVI display with your WMT based machine,
 	  say Y here.
 
+choice
+	prompt "Select WonderMedia framebuffer device"
+	depends on FB_WMT
+	default FB_WMT_GE
+
+config FB_WMT_GE
+	bool "GE"
+	---help---
+	  This is WonderMedia GE framebuffer driver.
+
+endchoice
+
 config LCD_WMT
 	bool "Support LCD device"
 	depends on FB_WMT
@@ -530,21 +542,6 @@ config WMT_MB_SIZE
       decode buffer, video display buffer, etc. This could prevent
       video decoder from lacking continue memroy for decoding. The
       reserved size will be Mbyte unit.
-
-config FB_WMT_GE
-	bool "WonderMedia GE Framebuffer Support"
-	depends on FB && ARCH_WMT
-        default y
-	---help---
-	  This is WM8510 GE framebuffer driver.
-	  say Y here.
-
-config GE_BUFFER_SIZE
-	int "Forced GE buffer size (MiB)"
-	depends on FB_WMT_GE
-	default 0
-	help
-	  Forced GE buffer size. (0 = autodetect)
 
 config FB_WMT_VID
 	bool "WonderMedia VID Support"

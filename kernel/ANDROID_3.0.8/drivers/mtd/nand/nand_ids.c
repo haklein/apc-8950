@@ -216,34 +216,143 @@ struct WMT_nand_flash_dev WMT_nand_flash_ids[] = {
   {0x98D585A5, 8192, 2048, 16, 262144, 5, 0, 127, 0, WIDTH_8,
    1, 0, 1, NAND_TYPE_MLC, 4, 0, 0x2424, "TOSHIBA_NF_TH58NVG4D4C"},*/
 	
-	{0xADD314A5, 4096, 2048,  64, 0x40000, 5, 125, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C46,  0x46, 0, 0, "HY27UT088G2M-T(P)", LP_OPTIONS},
-	{0xADF1801D, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140A0F64,  0x64, 0, 0, "HY27UF081G2A", LP_OPTIONS},
-	{0xADF1001D, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140A0C46,  0x46, 0, 0, "H27U1G8F2BFR", LP_OPTIONS},
-	{0xADD59425, 4096, 4096, 218, 0x80000, 5, 125, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x140A0F64,  0x64, 0, 0, "HY27UAG8T2A", LP_OPTIONS},
-	{0xADD7949A, 2048, 8192, 448,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0C64,  0x64, 0, 0, "HY27UBG8T2ATR", LP_OPTIONS},
-	//MAX 60 BAD BLOCKs                                                                                      
-	{0xECD314A5, 4096, 2048,  64, 0x40000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C64,  0x64, 0, 0, "K9G8G08X0A", LP_OPTIONS},
-	//MAX 100 BAD BLOCKs                                                                                     
-	{0xECD59429, 4096, 4096, 218, 0x80000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x140A0F64,  0x64, 0, 0, "K9GAG08UXD", LP_OPTIONS},
-	{0xECF10095, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140a1464,  0x64, 0, 0, "K9F1G08U0B", LP_OPTIONS},
-	{0xEC75A5BD, 2048,  512,  16,  0x4000, 4,   0,   1, 5, WIDTH_8, 1, 1, 0, NAND_TYPE_SLC,  1, 0x230F1964,  0x64, 0, 0, "K95608U0D", 0},
-	{0xECD514B6, 4096, 4096, 128, 0x80000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C64,  0x64, 0, 0, "K9GAG08U0M", LP_OPTIONS},
-	{0xECD755B6, 8192, 4096, 128, 0x80000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C64,  0x64, 0, 0, "K9LBG08U0M", LP_OPTIONS},
-	{0xECD58472, 2048, 8192, 436,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x190A0FFF, 0x12C, 0, 0, "K9GAG08U0E", LP_OPTIONS},
-	{0xECD7947A, 4096, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x190A0FFF, 0x12C, 0, 0, "K9GBG08U0A", LP_OPTIONS},
-	{0xECD59476, 2048, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0CFF, 0x12C, 0, 0, "K9GAG08U0F", LP_OPTIONS},
-	{0xECD7947E, 4096, 8192,1024,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x140B0BFF, 0x12C, 0, 0, "K9GBG08U0B", LP_OPTIONS},
-	                                                                                                         
-	{0x98D594BA, 4096, 4096, 218, 0x80000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x190F0F70,  0x64, 0, 0, "TC58NVG4D1DTG0", LP_OPTIONS},
-	{0x98D19015, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140A0C11,  0x11, 0, 0, "TC58NVG0S3ETA00", LP_OPTIONS},
-	{0x98D59432, 2048, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0C84,  0x84, 0, 0, "TC58NVG4D2FTA00", LP_OPTIONS},
-	{0x98D58432, 2048, 8192, 640,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x190A0FFF, 0x12C, 0, 0, "TC58NVG4D2HTA00", LP_OPTIONS},
-	{0x98DE8493, 2048,16384,1280,0x400000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x190A0FFF, 0x12C, 0, 0, "TC58NVG6DCJTA00", LP_OPTIONS},
+	{0xADD314A5, 4096, 2048,  64, 0x40000, 5, 125, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C46,  0x46, 0, 0, 0, "HY27UT088G2M-T(P)", LP_OPTIONS, 0},
+	{0xADF1801D, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140A0F64,  0x64, 0, 0, 0, "HY27UF081G2A", LP_OPTIONS, 0},
+	{0xADF1001D, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140A0C46,  0x46, 0, 0, 0, "H27U1G8F2BFR", LP_OPTIONS, 0},
+	{0xADD59425, 4096, 4096, 218, 0x80000, 5, 125, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x140A0F64,  0x64, 0, 0, 0, "HY27UAG8T2A", LP_OPTIONS, 0},
+	{0xADD7949A, 2048, 8192, 448,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0C64,  0x64, 0, 0, 0, "H27UBG8T2ATR", LP_OPTIONS, 0},
+	{0xADD5949A, 1024, 8192, 448,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0C64,  0x64, 0, 0, 0, "H27UAG8T2BTR-BC", LP_OPTIONS, 0},
+	{0xADD794DA, 2048, 8192, 640,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x10080AC8,  0xC8, 0, 1, 1, "H27UBG8T2BTR", LP_OPTIONS, 0},
+	{0xADD79491, 2048, 8192, 640,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x100608C8,  0xC8, 0, 1, 1, "H27UBG8T2CTR-F20", LP_OPTIONS, 0},
+	{0xADDE94DA, 4096, 8192, 640,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x100608C8,  0xC8, 1, 1, 1, "H27UCG8T2ATR-F20", LP_OPTIONS, 0},
+                                                                                                                         
+	{0xECD314A5, 4096, 2048,  64, 0x40000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C64,  0x64, 0, 0, 0, "K9G8G08X0A", LP_OPTIONS, 0},
+	{0xECD59429, 4096, 4096, 218, 0x80000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x140A0F64,  0x64, 0, 0, 0, "K9GAG08UXD", LP_OPTIONS, 0},
+	{0xECF10095, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140a1464,  0x64, 0, 0, 0, "K9F1G08U0B", LP_OPTIONS, 0},
+	{0xEC75A5BD, 2048,  512,  16,  0x4000, 4,   0,   1, 5, WIDTH_8, 1, 1, 0, NAND_TYPE_SLC,  1, 0x230F1964,  0x64, 0, 0, 0, "K95608U0D", 0, 0},
+	{0xECD514B6, 4096, 4096, 128, 0x80000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C64,  0x64, 0, 0, 0, "K9GAG08U0M", LP_OPTIONS, 0},
+	{0xECD755B6, 8192, 4096, 128, 0x80000, 5, 127,   0, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC,  4, 0x140A0C64,  0x64, 0, 0, 0, "K9LBG08U0M", LP_OPTIONS, 0},
+	{0xECD58472, 2048, 8192, 436,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x190A0FFF, 0x12C, 0, 0, 0, "K9GAG08U0E", LP_OPTIONS, 0},
+	{0xECD7947A, 4096, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x190A0FFF, 0x12C, 0, 0, 1, "K9GBG08U0A", LP_OPTIONS, 0},
+	{0xECD59476, 2048, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0CFF, 0x12C, 0, 0, 0, "K9GAG08U0F", LP_OPTIONS, 0},
+	{0xECD7947E, 4096, 8192,1024,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x140B0BFF, 0x12C, 0, 0, 1, "K9GBG08U0B", LP_OPTIONS, 0},
+	{0xECDED57A, 8192, 8192, 640,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0CFF, 0x12C, 0, 0, 1, "K9LCG08U0A", LP_OPTIONS, 0},
+	                                                                                                                       
+	{0x98D594BA, 4096, 4096, 218, 0x80000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x190F0F70,  0x70, 0, 0, 0, "TC58NVG4D1DTG0", LP_OPTIONS, 0},
+	{0x98D19015, 1024, 2048,  64, 0x20000, 4,   0,   1, 0, WIDTH_8, 4, 0, 1, NAND_TYPE_SLC,  4, 0x140A0C11,  0x11, 0, 0, 0, "TC58NVG0S3ETA00", LP_OPTIONS, 0},
+	{0x98D59432, 2048, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0C84,  0x84, 0, 0, 0, "TC58NVG4D2FTA00", LP_OPTIONS, 0},
+	{0x98D58432, 2048, 8192, 640,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x190A0FFF, 0x12C, 0, 1, 1, "TC58NVG4D2HTA00", LP_OPTIONS, 0},
+	{0x98DE8493, 2048,16384,1280,0x400000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x10070AFF, 0x12C, 0, 1, 1, "TC58NVG6DCJTA00", LP_OPTIONS, 0},
+	{0x98D79432, 4096, 8192, 448,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x140A0C78,  0x78, 0, 0, 0, "TC58NVG5D2FTAI0", LP_OPTIONS, 0x76550000},
+	{0x98D79432, 4096, 8192, 640,0x100000, 5,   0, 127, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x10070AFF, 0x12C, 0, 1, 1, "TC58NVG5D2HTA00", LP_OPTIONS, 0x76560000},
+//{0x983A8493, 2048,16384,1280,0x400000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 40, 0x10070AFF, 0x12C, 0, 1, 1, "TH58NVG8DCJTA20", LP_OPTIONS, 0},
 	
-	{0x2C88044B, 4096, 8192, 448,0x200000, 5,   0,   1, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x321E32C8,  0xC8, 0, 0, "MT29F64G08CBAAA", LP_OPTIONS},
+	{0x2C88044B, 4096, 8192, 448,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x321E32C8,  0xC8, 0, 0, 0, "MT29F64G08CBAAA", LP_OPTIONS, 0},
+	{0x2C88044B, 4096, 8192, 448,0x200000, 5,   0, 255, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 24, 0x321E32C8,  0xC8, 0, 0, 0, "MT29F128G08CFAAA", LP_OPTIONS, 0},
+	{0x2C68044A, 4096, 4096, 224,0x100000, 5,   0,   1, 0, WIDTH_8, 1, 0, 1, NAND_TYPE_MLC, 12, 0x321E32C8,  0xC8, 0, 0, 0, "MT29F32G08CBACA", LP_OPTIONS, 0},
 	{0,}
 	/*add new product item here.*/
 };
+
+struct nand_read_retry_param chip_table[] = {
+	//Hynix
+    [0] = {
+		.magic = "readretry", 
+		.nand_id = 0xADD794DA,
+		.nand_id_5th = 0,
+    .eslc_reg_num = 5, 
+		.eslc_offset = {0xa0, 0xa1, 0xb0, 0xb1, 0xc9},
+		.eslc_set_value = {0x26, 0x26, 0x26, 0x26, 0x1}, 
+		.retry_reg_num = 4,
+		.retry_offset = {0xa7, 0xad, 0xae, 0xaf},
+		.retry_value = {0, 0x6,0xa, 0x6, 0x0, 0x3, 0x7, 0x8, 0, 0x6, 0xd, 0xf, 0x0, 0x9, 0x14, 0x17, 0x0, 0x0, 0x1a, 0x1e, 0x0, 0x0, 0x20, 0x25}, 
+		.total_try_times = 6, 
+		.cur_try_times = -1,
+		.set_parameter = hynix_set_parameter, 
+		.get_parameter = hynix_get_parameter,
+		.get_otp_table = NULL, 
+		.retry = 0
+	},
+	[1] = {
+		.magic = "readretry", 
+		.nand_id = 0xADDE94DA, 
+		.nand_id_5th = 0,
+		.eslc_reg_num = 4, 
+		.eslc_offset = {0xb0, 0xb1, 0xa0, 0xa1}, 
+		.eslc_set_value = {0xa, 0xa, 0xa, 0xa}, 
+		.retry_reg_num = 8, 
+		.retry_offset = {0xcc, 0xbf, 0xaa, 0xab, 0xcd, 0xad, 0xae, 0xaf}, 
+		.otp_len = 2,
+		.otp_offset = {0xff, 0xcc},
+		.otp_data = {0x40, 0x4d},
+		.total_try_times = 7, 
+		.cur_try_times = -1, 
+		.set_parameter = hynix_set_parameter, 
+		.get_parameter = hynix_get_parameter, 
+		.get_otp_table = hynix_get_otp, 
+		.retry = 0
+	},
+	[2] = {
+		.magic = "readretry", 
+		.nand_id = 0xADDE94EB, 
+		.nand_id_5th = 0x0,
+		.eslc_reg_num = 4, 
+		.eslc_offset = {0xa0, 0xa1, 0xa7, 0xa8}, 
+		.eslc_set_value = {0xa, 0xa, 0xa, 0xa}, 
+		.retry_reg_num = 8, 
+		.retry_offset = {0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7}, 
+		.otp_len = 2,
+		.otp_offset = {0xae, 0xb0},
+		.otp_data = {0x00, 0x4d},
+		.total_try_times = 7, 
+		.cur_try_times = -1, 
+		.set_parameter = hynix_set_parameter, 
+		.get_parameter = hynix_get_parameter, 
+		.get_otp_table = hynix_get_otp, 
+		.retry = 0
+	},
+	[3] = {
+		.magic = "readretry", 
+		.nand_id = 0xADD79491, 
+		.nand_id_5th = 0x0,
+		.eslc_reg_num = 4, 
+		.eslc_offset = {0xa0, 0xa1, 0xa7, 0xa8}, 
+		.eslc_set_value = {0xa, 0xa, 0xa, 0xa}, 
+		.retry_reg_num = 8, 
+		.retry_offset = {0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7}, 
+		.otp_len = 2,
+		.otp_offset = {0xae, 0xb0},
+		.otp_data = {0x00, 0x4d},
+		.total_try_times = 7, 
+		.cur_try_times = -1, 
+		.set_parameter = hynix_set_parameter, 
+		.get_parameter = hynix_get_parameter, 
+		.get_otp_table = hynix_get_otp, 
+		.retry = 0
+	},
+
+	//Toshiba
+	[4] = {
+		.magic = "readretry", 
+		.nand_id = 0x98de8493, 
+		.nand_id_5th = 0,
+		.retry_reg_num = 4, 
+		.retry_offset = {4, 5, 6, 7},
+		.retry_value = {0, 0, 0, 0, 4, 4, 4, 4, 0x7c, 0x7c, 0x7c, 0x7c, 0x78, 0x78, 0x78, 0x78, 0x74, 0x74, 0x74, 0x74, 0x8, 0x8, 0x8, 0x8},
+		.total_try_times = 6,
+		.cur_try_times = 0,
+		.set_parameter = toshiba_set_parameter,
+		.get_parameter = toshiba_get_parameter,
+		.retry = 0,
+	},
+
+	[5] = {
+		.nand_id = 0,
+		.nand_id_5th = 0,
+	}
+};
+
+
 
 /*
 *	Manufacturer ID list

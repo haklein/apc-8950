@@ -208,11 +208,9 @@ vout_t *vout_get_entry_adapter(vout_mode_t mode)
 		case VOUT_DVI:
 		case VOUT_LCD:
 		case VOUT_DVO2HDMI:
-			no = VPP_VOUT_NUM_DVI;
-			break;
 		case VOUT_SD_ANALOG:
 		case VOUT_VGA:
-			no = VPP_VOUT_NUM_VGA;
+			no = VPP_VOUT_NUM_DVI;
 			break;
 		case VOUT_HDMI:
 		case VOUT_LVDS:
@@ -231,18 +229,12 @@ vout_inf_t *vout_get_inf_entry_adapter(vout_mode_t mode)
 
 	switch(mode){
 		case VOUT_SD_DIGITAL:
-			no = VOUT_INF_SDD;
-			break;
 		case VOUT_SD_ANALOG:
-			no = VOUT_INF_SDA;
-			break;
 		case VOUT_DVI:
 		case VOUT_LCD:
 		case VOUT_DVO2HDMI:
+		case VOUT_VGA:			
 			no = VOUT_INF_DVI;
-			break;
-		case VOUT_VGA:
-			no = VOUT_INF_VGA;
 			break;
 		case VOUT_HDMI:
 			no = VOUT_INF_HDMI;
@@ -262,13 +254,24 @@ int vout_info_add_entry(vout_t *vo)
 	vout_info_t *p;
 	int i;
 
+	if( vo->inf == 0 )
+		return 0;
+
 #ifdef CONFIG_HW_GOVR2_DVO
-	vo->govr = ( vo->inf->mode == VOUT_INF_DVI )? p_govrh2:p_govrh;
+	switch( vo->inf->mode ){
+		case VOUT_INF_DVI:
+			vo->govr = p_govrh2;
+			break;
+		default:
+			vo->govr = p_govrh;
+			break;
+	}
 #else
 	vo->govr = ( (vo->inf->mode == VOUT_INF_DVI) && g_vpp.dual_display )? p_govrh2:p_govrh;
 #endif
 	for(i=0;i<VPP_VOUT_INFO_NUM;i++){
 		p = &vout_info[i];
+		p->num = i;
 		if( p->vo_mask == 0 ){
 			break;
 		}
@@ -277,16 +280,18 @@ int vout_info_add_entry(vout_t *vo)
 			return i;
 		}
 
-		if( p->govr_mod == ((vpp_mod_base_t *)(vo->govr))->mod ){
-			goto add_entry_exist;
+		if( vo->govr ){
+			if( p->govr_mod == ((vpp_mod_base_t *)(vo->govr))->mod ){
+				goto add_entry_exist;
+			}
 		}
 	}
 
 	if( i >= VPP_VOUT_INFO_NUM ){
 		DBG_ERR("full\n");
+		goto add_entry_exist;
 		return VPP_VOUT_INFO_NUM;
 	}
-	p->govr_mod = ((vpp_mod_base_t *)vo->govr)->mod;
 	if( (g_vpp.dual_display == 0) && (i!=0) ){
 		p->resx = vout_info[0].resx;
 		p->resy = vout_info[0].resy;
@@ -298,7 +303,8 @@ int vout_info_add_entry(vout_t *vo)
 	p->resx_virtual = vpp_calc_align(p->resx,4);
 	p->resy_virtual = p->resy;
 	p->fps = (int) vo->pixclk;
-	p->govr = (p->govr_mod == VPP_MOD_GOVRH)? p_govrh:p_govrh2;
+	p->govr_mod = (vo->govr)? ((vpp_mod_base_t *)vo->govr)->mod:VPP_MOD_MAX;
+	p->govr = vo->govr;
 add_entry_exist:
 	p->vo_mask |= (0x1 << vo->num);	
 	DBG_MSG("info %d,vo mask 0x%x,%s,%dx%d@%d\n",i,p->vo_mask,vpp_mod_str[p->govr_mod],p->resx,p->resy,p->fps);
@@ -345,6 +351,7 @@ vpp_timing_t *vout_find_video_mode(int no,vout_info_t *info)
 	vpp_timing_t *p_timing = 0;
 	unsigned int opt = 0;
 	int index = 0;
+	vpp_timing_t *edid_timing = 0;
 
 	if( (vo = vout_get_entry(no)) == 0 )
 		return 0;
@@ -358,16 +365,26 @@ vpp_timing_t *vout_find_video_mode(int no,vout_info_t *info)
 	}
 	}
 
+	vo_option = vo->option[1];
+	DBG_MSG("(%d,%dx%d@%d,%d),%s\n",no,info->resx,info->resy,info->pixclk,info->fps,(vo_option & VOUT_OPT_INTERLACE)?"i":"p");
 	if( vo->status & VPP_VOUT_STS_PLUGIN ){
 		if( (edid = vout_get_edid(no)) ){
 			if( edid_parse(edid,&vo->edid_info) == 0 ){
 				edid = 0;
 			}
+			else {
+				opt = info->fps | ((vo_option & VOUT_OPT_INTERLACE)? EDID_TMR_INTERLACE:0);
+				if( edid_find_support(&vo->edid_info,info->resx,info->resy,opt,&edid_timing) ){
+					if( edid_timing ){
+						p_timing = edid_timing;
+						DBG_MSG("Use EDID detail timing\n");
+						goto find_video_mode;
+					}
+				}
+			}
 		}
 	}
 
-	vo_option = vo->option[1];
-	DBG_MSG("(%d,%dx%d@%d),%s\n",no,info->resx,info->resy,info->pixclk,(vo_option & VOUT_OPT_INTERLACE)?"i":"p");
 	do {
 		p_timing = vpp_get_video_mode(info->resx,info->resy,info->pixclk,&index);
 		DBG_MSG("find(%dx%d@%d) -> %dx%d\n",info->resx,info->resy,info->pixclk,p_timing->hpixel,p_timing->vpixel);
@@ -382,13 +399,13 @@ vpp_timing_t *vout_find_video_mode(int no,vout_info_t *info)
 			break;
 
 		DBG_MSG("find edid %dx%d@%d%s\n",info->resx,info->resy,info->fps,(opt & EDID_TMR_INTERLACE)?"i":"p");
-		if( edid_find_support(&vo->edid_info,info->resx,info->resy,opt) ){
+		if( edid_find_support(&vo->edid_info,info->resx,info->resy,opt,&edid_timing) ){
 			break;
 		}
 
 		opt = info->fps | ((vo_option & VOUT_OPT_INTERLACE)? 0:EDID_TMR_INTERLACE);
 		DBG_MSG("find edid %dx%d@%d%s\n",info->resx,info->resy,info->fps,(opt & EDID_TMR_INTERLACE)?"i":"p");
-		if( edid_find_support(&vo->edid_info,info->resx,info->resy,opt) ){
+		if( edid_find_support(&vo->edid_info,info->resx,info->resy,opt,&edid_timing) ){
 			break;
 		}
 
@@ -397,19 +414,61 @@ vpp_timing_t *vout_find_video_mode(int no,vout_info_t *info)
 			info->resy = vpp_video_mode_table[0].vpixel;
 			break;
 		}
-		index--;
+		
+		do {
+			index--;
+			p_timing = (vpp_timing_t *) &vpp_video_mode_table[index];
+			if( info->resx == p_timing->hpixel ){
+				int vpixel;
+
+				vpixel = p_timing->vpixel;
+				if( p_timing->option & VPP_OPT_INTERLACE ){
+					vpixel *= 2;
+					index--;
+				}
+				if( info->resy == vpixel ){
+					continue;
+				}
+			}
+			break;
+		} while(1);
 		info->resx = vpp_video_mode_table[index].hpixel;
 		info->resy = vpp_video_mode_table[index].vpixel;
+		if(vpp_video_mode_table[index].option & VPP_OPT_INTERLACE){
+			info->resy *= 2;
+		}
 	} while(1);
-	
-	if( opt & EDID_TMR_INTERLACE )
-		vo_option |= VOUT_OPT_INTERLACE;
-	else 
-		vo_option &= ~VOUT_OPT_INTERLACE;
-	
-	p_timing = vpp_get_video_mode_ext(info->resx,info->resy,info->fps,vo_option);
+
+	if( edid_timing ){
+		p_timing = edid_timing;
+		DBG_MSG("Use EDID detail timing\n");
+	}
+	else {
+		if( opt & EDID_TMR_INTERLACE )
+			vo_option |= VOUT_OPT_INTERLACE;
+		else 
+			vo_option &= ~VOUT_OPT_INTERLACE;
+		
+		p_timing = vpp_get_video_mode_ext(info->resx,info->resy,info->fps,vo_option);
+	}
 find_video_mode:
-	DBG_MSG("Leave (%dx%d@%d)\n",p_timing->hpixel,p_timing->vpixel,p_timing->pixel_clock);
+	{
+		int hpixel,vpixel;
+		
+		info->resx = p_timing->hpixel;
+		info->resy = p_timing->vpixel;
+		hpixel = p_timing->hpixel + p_timing->hsync + p_timing->hfp + p_timing->hbp;
+		vpixel = p_timing->vpixel + p_timing->vsync + p_timing->vfp + p_timing->vbp;
+		if( p_timing->option & VPP_OPT_INTERLACE ) {
+			info->resy *= 2;
+//			vpixel *= 2;
+		}
+		info->pixclk = p_timing->pixel_clock;
+		info->fps = info->pixclk / (hpixel * vpixel);
+		info->resx_virtual = vpp_calc_fb_width(g_vpp.mb_colfmt,info->resx);
+		info->resy_virtual = info->resy;
+	}
+	DBG_MSG("Leave (%dx%d@%d,%d)\n",p_timing->hpixel,p_timing->vpixel,p_timing->pixel_clock,info->fps);
 	return p_timing;
 }
 
@@ -456,7 +515,7 @@ int vout_find_edid_support_mode
 		option = f & EDID_TMR_FREQ;
 		option |= (p->option & VPP_OPT_INTERLACE)? EDID_TMR_INTERLACE:0;
 
-		if( edid_find_support(info, w, h, option ) ){
+		if( edid_find_support(info,w,h,option,&p) ){
 			*resx = w;
 			*resy = h;
 			*fps = f;
@@ -474,11 +533,16 @@ void vout_set_framebuffer(unsigned int mask,vdo_framebuf_t *fb)
 	int i;
 	vout_t *vo;
 
+	if( mask == 0 )
+		return;
+
 	for(i=0;i<VPP_VOUT_NUM;i++){
 		if( (mask & (0x1 << i)) == 0 )
 			continue;
 		if( (vo = vout_get_entry(i)) ){
-			vo->govr->fb_p->set_framebuf(fb);
+			if( vo->govr ){
+				vo->govr->fb_p->set_framebuf(fb);
+			}
 		}
 	}
 }
@@ -488,11 +552,16 @@ void vout_set_tg_enable(unsigned int mask,int enable)
 	int i;
 	vout_t *vo;
 
+	if( mask == 0 )
+		return;
+
 	for(i=0;i<VPP_VOUT_NUM;i++){
 		if( (mask & (0x1 << i)) == 0 )
 			continue;
 		if( (vo = vout_get_entry(i)) ){
-			govrh_set_tg_enable(vo->govr,enable);
+			if( vo->govr ){
+				govrh_set_tg_enable(vo->govr,enable);
+			}
 		}
 	}
 }
@@ -504,14 +573,17 @@ int vout_set_blank(unsigned int mask,vout_blank_t arg)
 
 	DBG_DETAIL("(0x%x,%d)\n",mask,arg);
 
+	if( mask == 0 )
+		return 0;
+
 	for(i=0;i<VPP_VOUT_NUM;i++){
 		if( (mask & (0x1 << i)) == 0 )
 			continue;
-		
+
 		if( (vo = vout_get_entry(i)) ){
 			if( vo->inf ){
-				vo->inf->blank(vo,arg);
 				vout_change_status(vo,VPP_VOUT_STS_BLANK,arg);
+				vo->inf->blank(vo,arg);
 				if( vo->dev && vo->dev->set_power_down ){
 					vo->dev->set_power_down((arg==VOUT_BLANK_POWERDOWN)?1:0);
 				}
@@ -526,8 +598,10 @@ int vout_set_blank(unsigned int mask,vout_blank_t arg)
 		govr_enable_mask = 0;
 		for(i=0;i<VPP_VOUT_NUM;i++){
 			if( (vo = vout_get_entry(i)) ){
-				govr_mask = (vo->govr->mod == VPP_MOD_GOVRH)? 0x1:0x2;
-				govr_enable_mask |= (vo->status & VPP_VOUT_STS_BLANK)? 0:govr_mask;
+				if( vo->govr ){
+					govr_mask = (vo->govr->mod == VPP_MOD_GOVRH)? 0x1:0x2;
+					govr_enable_mask |= (vo->status & VPP_VOUT_STS_BLANK)? 0:govr_mask;
+				}
 			}
 		}
 		for(i=0;i<VPP_VOUT_INFO_NUM;i++){
@@ -593,14 +667,6 @@ int vout_check_info(unsigned int mask,vout_info_t *info)
 		DBG_ERR("no support mode\n");
 		return -1;
 	}
-
-	info->resx = p_timing->hpixel;
-	info->resy = p_timing->vpixel;
-	if( p_timing->option & VPP_OPT_INTERLACE ){
-		info->resy *= 2;
-	}
-	info->resx_virtual = vpp_calc_fb_width(VPP_UBOOT_COLFMT,info->resx);
-	info->pixclk = p_timing->pixel_clock;
 	return 0;
 }
 
@@ -613,6 +679,9 @@ int vout_config(unsigned int mask,vout_info_t *info)
 	unsigned int govr_mask = 0;
 
 	DBG_DETAIL("(0x%x)\n",mask);
+
+	if( mask == 0 )
+		return 0;
 
 	for(i=0;i<VPP_VOUT_NUM;i++){
 		if( (mask & (0x1 << i)) == 0 )
@@ -638,6 +707,9 @@ int vout_config(unsigned int mask,vout_info_t *info)
 			continue;
 
 		if( (vo = vout_get_entry(i)) == 0 )
+			continue;
+
+		if( vo->govr == 0 )
 			continue;
 
 		if( (govr_mask & (0x1 << vo->govr->mod)) == 0 ){
@@ -746,7 +818,7 @@ char *vout_get_edid(int no)
 		
 		DBG_DETAIL("edid read\n");
 		vout_change_status(vo,VPP_VOUT_STS_EDID,1);
-		if( info = vout_get_info_entry(no) ){
+		if( (info = vout_get_info_entry((g_vpp.virtual_display)?1:no)) ){
 			info->force_config = 1;
 		}
 		return vo->edid;
@@ -784,6 +856,20 @@ int vout_get_edid_option(int no)
 
 	edid_parse(vo->edid,&vo->edid_info);
 	return vo->edid_info.option;
+}
+
+unsigned int vout_get_mask(vout_info_t *vo_info)
+{
+	if( g_vpp.dual_display == 0 )
+		return VPP_VOUT_ALL;
+
+	if( g_vpp.virtual_display ){
+		if( vo_info->num == 0 ){
+			return 0;
+		}
+		return VPP_VOUT_ALL;
+	}
+	return vo_info->vo_mask;
 }
 
 /*--------------------End of Function Body -----------------------------------*/

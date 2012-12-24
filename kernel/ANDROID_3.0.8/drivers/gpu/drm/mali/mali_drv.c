@@ -57,13 +57,27 @@ static struct drm_driver driver =
 #ifdef DRIVER_USE_PLATFORM_DEVICE
 	.driver_features = DRIVER_USE_PLATFORM_DEVICE,
 #else
+	/*
 	.driver_features = DRIVER_MODESET | DRIVER_HAVE_DMA | DRIVER_FB_DMA,
+	*/
+	.driver_features = DRIVER_FB_DMA,
 #endif
 	.load = mali_drm_load,
 	.unload = mali_drm_unload,
 	.context_dtor = NULL,
+#ifdef DRIVER_USE_PLATFORM_DEVICE
 	.reclaim_buffers = NULL,
 	.reclaim_buffers_idlelocked = NULL,
+#else
+	.reclaim_buffers = NULL,
+	/*
+	.reclaim_buffers = drm_core_reclaim_buffers,
+	*/
+	.reclaim_buffers_idlelocked = NULL,
+	/*
+	.reclaim_buffers_locked = NULL,
+	*/
+#endif
 	.preclose = mali_drm_preclose,
 	.lastclose = mali_drm_lastclose,
 	.suspend = mali_drm_suspend,

@@ -288,12 +288,15 @@ unsigned int scl_set_clock(unsigned int pixel_clock)
 
 void scl_set_timing(vpp_clock_t *timing,unsigned int pixel_clock)
 {
+#if 1
+	timing->read_cycle = WMT_SCL_RCYC_MIN;
+#else
 	timing->read_cycle = scl_set_clock(pixel_clock * 2) - 1;
 	timing->read_cycle = ( timing->read_cycle < WMT_SCL_RCYC_MIN )? WMT_SCL_RCYC_MIN:timing->read_cycle;
 	timing->read_cycle = ( timing->read_cycle > 255 )? 0xFF:timing->read_cycle;
-
+#endif
 	vppif_reg32_write(SCL_TG_RDCYC, timing->read_cycle);
-	vppif_reg32_write(SCL_READCYC_1T,(timing->read_cycle)? 0:1);	
+	vppif_reg32_write(SCL_READCYC_1T,(timing->read_cycle)? 0:1);
 	vppif_reg32_write(SCL_TG_H_ALLPIXEL, timing->total_pixel_of_line);
 	vppif_reg32_write(SCL_TG_H_ACTBG, timing->begin_pixel_of_active);
 	vppif_reg32_write(SCL_TG_H_ACTEND, timing->end_pixel_of_active);
@@ -302,7 +305,7 @@ void scl_set_timing(vpp_clock_t *timing,unsigned int pixel_clock)
 	vppif_reg32_write(SCL_TG_V_ACTEND, timing->end_line_of_active);
 	vppif_reg32_write(SCL_TG_VBIE, timing->line_number_between_VBIS_VBIE);
 	vppif_reg32_write(SCL_TG_PVBI, timing->line_number_between_PVBI_VBIS);
-	
+
 	DBG_DETAIL("H beg %d,end %d,total %d\n",
 		timing->begin_pixel_of_active,timing->end_pixel_of_active,timing->total_pixel_of_line);
 	DBG_DETAIL("V beg %d,end %d,total %d\n",
@@ -1212,7 +1215,7 @@ void sclw_set_framebuffer(vdo_framebuf_t *fb)
 		if( scl_fb->img_h > fb->img_h ){ // scale down
 			switch(p_scl->scale_mode){
 				case VPP_SCALE_MODE_ADAPTIVE:
-					if( (fb->img_h * 2) > scl_fb->img_h ){	// 1 > mode(3) > 1/2
+					if( ((fb->img_h * 2) > scl_fb->img_h) && ((scl_fb->fb_w % 64) == 0) ){	// 1 > mode(3) > 1/2
 						v = 1; // bilinear mode
 					}
 					else {
@@ -1407,42 +1410,24 @@ static void scl_proc_scale_complete_work(void)
 int scl_proc_scale_complete(void *arg)
 {
 //	DPRINT("[SCL] scl_proc_scale_complete\n");
-
-	while( vppif_reg32_read(SCL_INTSTS_TGERR) ){
-		unsigned int rd_cyc;
-		
-		// add rd_cyc to retry
-		rd_cyc = vppif_reg32_read(SCL_TG_RDCYC);
-		if( rd_cyc > 0xFD ){
-			DPRINT("[VPU] *E* scale error\n");
-			goto scale_end;
-		}
-		if( vpp_check_dbg_level(VPP_DBGLVL_SCALE) ){
-			DPRINT("[VPU] scale retry, rcyc 0x%x\n",rd_cyc);
-		}
-		rd_cyc = rd_cyc + (0xFF - rd_cyc) / 2;
-		vppif_reg32_write(SCL_TG_RDCYC,rd_cyc);
-		vppif_reg32_write(SCL_READCYC_1T,(rd_cyc)? 0:1);
+	if( vppif_reg32_read(SCL_INTSTS_TGERR) ){
+		DPRINT("[SCL] scale TG err 0x%x,0x%x\n",vppif_reg32_in(REG_SCL_TG_STS),vppif_reg32_in(REG_SCLW_FF_CTL));
 		vppif_reg32_out(REG_SCL_TG_STS+0x0,BIT0);
 		vppif_reg32_out(REG_SCLW_FF_CTL,0x10101);
-
-		DPRINT("[SCL] *E* scale error\n");
 	}
-	
-//	scl_reg_dump();
-	
-scale_end:	
+	scl_set_tg_enable(VPP_FLAG_DISABLE);
 	vppm_set_int_enable(VPP_FLAG_DISABLE,SCL_COMPLETE_INT);
 	sclw_set_mif_enable(VPP_FLAG_DISABLE);
 	sclr_set_mif_enable(VPP_FLAG_DISABLE);
 	sclr_set_mif2_enable(VPP_FLAG_DISABLE);
 	scl_set_enable(VPP_FLAG_DISABLE);
 
-#ifdef __KERNEL__
+//#ifdef __KERNEL__
+#if 0
 	INIT_WORK(&scl_proc_scale_wq, scl_proc_scale_complete_work);
 	schedule_work(&scl_proc_scale_wq);
 #else
-	scl_proc_scale_complete_work();
+	scl_proc_scale_complete_work(0);
 #endif
 	return 0;
 }
@@ -1456,7 +1441,7 @@ int scl_proc_scale_finish(void)
 
     ret = wait_event_interruptible_timeout(scl_proc_scale_event, (scl_scale_complete != 0), 3*HZ);
 	if( ret == 0 ){ // timeout
-		DPRINT("[VPU] *E* wait scale timeout\n");
+		DPRINT("[SCL] *E* wait scale timeout\n");
 		return -1;
 	}
 #endif
@@ -1526,7 +1511,7 @@ int scl_do_recursive_scale(vdo_framebuf_t *src_fb,vdo_framebuf_t *dst_fb)
 	scl_scale_complete = 0;
 	vppm_set_int_enable(VPP_FLAG_ENABLE,SCL_COMPLETE_INT);
 	if( p_scl->scale_sync ){
-		vpp_irqproc_work(SCL_COMPLETE_INT,scl_proc_scale_complete,0,1);
+		ret = vpp_irqproc_work(SCL_COMPLETE_INT,scl_proc_scale_complete,0,50);
 		scl_proc_scale_finish();
 	}
 	else {

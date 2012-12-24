@@ -53,10 +53,15 @@ typedef struct wmt_cec_msg{
 	char msgdata[MAX_MSG_BYTE];
 } wmt_cec_msg_t;
 
+typedef struct wmt_phy_addr {
+	unsigned int phy_addr;
+} wmt_phy_addr_t;
+
 #define WMT_CEC_IOC_MAGIC           'c'
-#define WMT_CEC_IOC_MAXNR           2
+#define WMT_CEC_IOC_MAXNR           3
 #define CECIO_TX_DATA				_IOW(WMT_CEC_IOC_MAGIC,0,wmt_cec_msg_t)
 #define CECIO_TX_LOGADDR			_IO(WMT_CEC_IOC_MAGIC,1)
+#define CECIO_RX_PHYADDR			_IOR(WMT_CEC_IOC_MAGIC,2,wmt_phy_addr_t)
 
 #if defined(__cplusplus)
 }

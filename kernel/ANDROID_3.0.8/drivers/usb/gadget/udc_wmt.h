@@ -720,6 +720,7 @@ struct vt8500_ep {
 	volatile u32        rndis_buffer_address;	
 	volatile u32        rndis_dma_phy_address;	
 	unsigned int        rndis_buffer_length;	
+	unsigned int        rndis_buffer_alloc ;		
 
 	/*processing stall and clear stall.*/
 	volatile u32        stall_more_processing;

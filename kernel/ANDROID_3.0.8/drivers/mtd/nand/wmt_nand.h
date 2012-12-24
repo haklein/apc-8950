@@ -30,29 +30,6 @@
 #ifndef __NFC_H__
 #define __NFC_H__
 
-#if (CONFIG_MTD_NAND_HM_ECC == 1)
- #if (CONFIG_MTD_NAND_PAGE_SIZE != 512)
-#define NAND_BBT_BCH_ECC
-#else
-#undef NAND_BBT_BCH_ECC
-#endif
-
-#if 0
-#if (CONFIG_MTD_NAND_PAGE_SIZE == 2048)
-static struct nand_ecclayout wmt_oobinfo_2048;
-static struct nand_ecclayout wmt_hm_oobinfo_2048;
-#else
-static struct nand_ecclayout wmt_oobinfo_4096;
-static struct nand_ecclayout wmt_hm_oobinfo_4096;
-#endif
-
-#endif
-
-#else
-#undef NAND_BBT_BCH_ECC
-#endif
-
-
 /* include/asm-arm/arch-vt8630.h or arch-vt8620.h or include/asm-zac/arch-vt8620.h or arch-vt8630.h */
 /* #define NFC_BASE_ADDR 0xd8009000 */
 
@@ -228,6 +205,8 @@ struct ECC_size_info{
 #define NFC_DMA_CPR			0x11C
 #define NFC_DMA_CCR			0X120
 
+#define NAND_GET_FEATURE  0xEE
+#define NAND_SET_FEATURE  0xEF
 /*
  *	NAND PDMA - DMA_GCR : DMA Global Control Register
  */
@@ -306,6 +285,15 @@ struct _NAND_PDMA_DESC_L{
 	unsigned long volatile reserve0 : 32;		/* bit 31-0  -reserved */
 };
 
+struct NFC_RW_T {
+	unsigned int	T_R_setup;
+	unsigned int	T_R_hold;
+	unsigned int	T_W_setup;
+	unsigned int	T_W_hold;
+	unsigned int	divisor;
+	unsigned int	T_TADL_delay;
+	unsigned int	T_RHC_THC;
+};
 
 /* ECC BCH interrupt mask */
 #define eccBCH_inetrrupt_enable 0x103
@@ -329,6 +317,9 @@ struct _NAND_PDMA_DESC_L{
 
 /* cfg_b */
 #define B2R	0x08 /* status form busy to ready */
+
+/* cfg_d */
+#define HIGH64FIFO 8
 
 /*cfg_12 */
 #define WP_DISABLE (1<<4) /* disable write protection */
@@ -406,11 +397,25 @@ void calculate_ECC_info(struct mtd_info *mtd, struct ECC_size_info *ECC_size);
 int bch_encoder(unsigned int *p_parity, u32 *p_data, u8 bits, u32 datacnt);
 unsigned int Caculat_1b_bch( unsigned int *pariA, unsigned int *bch_GF2, unsigned int din, u8 pari_len, u8 pari_lb);
 int Gen_GF2(u8 bits, unsigned int  *buf);
+int nand_get_feature(struct mtd_info *mtd);
+int nand_set_feature(struct mtd_info *mtd, int cmd, int addrss, int value);
+void rdmzier(uint8_t *buf, int size, int page);
+void rdmzier_oob(uint8_t *buf, uint8_t *src, int size, int page, int ofs);
+int nand_hynix_get_retry_reg(struct mtd_info *mtd, uint8_t *addr, uint8_t *para, int size);
+int nand_hynix_set_retry_reg(struct mtd_info *mtd, int reg);
+int write_bytes_cmd(struct mtd_info *mtd, int cmd_cnt, int addr_cnt, int data_cnt, uint8_t *cmd, uint8_t *addr, uint8_t *data);
+int hynix_read_retry_set_para(struct mtd_info *mtd, int reg);
+int load_hynix_opt_reg(struct mtd_info *mtd, struct nand_chip *chip);
 
 extern uint32_t NFC_RWTimming;
 extern uint32_t NFC_ClockDivisor;
 extern uint32_t NFC_ClockMask;
-extern uint32_t ECC8BIT_ENGINE;
 extern uint32_t redunt_err_mark;
-extern uint32_t chip_swap;
+extern uint32_t ECC8BIT_ENGINE;
+
+#define REG_SEED 1
+#define BYTE_SEED 2112
+
+
+
 #endif

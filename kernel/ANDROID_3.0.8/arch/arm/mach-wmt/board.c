@@ -107,8 +107,10 @@ static void __init wmt_map_io(void)
 
 	wmt_register_uart(0, 0);	/* mount ttyS0 (or ttyVT0) to UART0*/
 	wmt_register_uart(1, 1);	/* mount ttyS1 to UART1*/
+#ifdef CONFIG_UART_2_3_ENABLE
 	wmt_register_uart(2, 2);	/* mount ttyS2 to UART2*/
 	wmt_register_uart(3, 3);	/* mount ttyS3 to UART3*/
+#endif
 }
 
 extern struct sys_timer wmt_timer;

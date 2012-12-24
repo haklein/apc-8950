@@ -111,6 +111,9 @@ static UINT UdcPdmaVirAddrLO, UdcPdmaVirAddrSO;
 dma_addr_t UdcPdmaPhyAddrL2I, UdcPdmaPhyAddrS2I;
 static UINT UdcPdmaVirAddrL2I, UdcPdmaVirAddrS2I;
 
+dma_addr_t UdcRndisEp1PhyAddr, UdcRndisEp2PhyAddr, UdcRndisEp3PhyAddr;
+static UINT UdcRndisEp1VirAddr, UdcRndisEp2VirAddr, UdcRndisEp3VirAddr;
+
 #ifdef OTGIP
 static struct USB_GLOBAL_REG *pGlobalReg;
 #endif
@@ -594,6 +597,7 @@ wmt_free_request(struct usb_ep *_ep, struct usb_request *_req)
 /*struct usb_request req;*/
 static void wmt_pdma_init(struct device *dev);
 
+#if 0
 static void *
 wmt_alloc_buffer(
 	struct usb_ep	*_ep,
@@ -727,7 +731,7 @@ static void wmt_free_buffer(
 	if ((dma != 0) || (buf != 0))/*patch RDNDIS Gadget Driver ERROR (EP1 : interrupt in)*/
 		dma_free_coherent(ep->udc->dev, bytes, buf, dma);
 }
-
+#endif
 
 static void ep0_status(struct vt8500_udc *udc)
 {
@@ -1089,12 +1093,14 @@ static void next_in_dma(struct vt8500_ep *ep, struct vt8500_req *req)
 
 printk(KERN_INFO "rndis xxxxx %d\n",req->req.length);
 
-		retval = dma_alloc_coherent(ep->udc->dev,
-							dma_length, &dma, GFP_ATOMIC);
+		if (ep->rndis_buffer_alloc == 0) {
+		    //retval = dma_alloc_coherent(ep->udc->dev, dma_length, &dma, GFP_ATOMIC);
 
-		ep->rndis_buffer_address = (unsigned int)retval;
-		ep->rndis_dma_phy_address = (u32)dma;
+		    ep->rndis_buffer_address = (unsigned int)UdcRndisEp1VirAddr;
+		    ep->rndis_dma_phy_address = (u32)UdcRndisEp1PhyAddr;
 		ep->rndis_buffer_length = dma_length;
+			ep->rndis_buffer_alloc = 1;
+		}
 		ep->rndis = 1;
 
 	}
@@ -1106,13 +1112,14 @@ printk(KERN_INFO "rndis xxxxx %d\n",req->req.length);
 		unsigned int dma_length = 65536;
 
 //printk(KERN_INFO "rndis 3 xxxxx %d\n",req->req.length);
+		if (ep->rndis_buffer_alloc == 0) {
+		//retval = dma_alloc_coherent(ep->udc->dev, dma_length, &dma, GFP_ATOMIC);
 
-		retval = dma_alloc_coherent(ep->udc->dev,
-							dma_length, &dma, GFP_ATOMIC);
-
-		ep->rndis_buffer_address = (unsigned int)retval;
-		ep->rndis_dma_phy_address = (u32)dma;
-		ep->rndis_buffer_length = dma_length;
+		      ep->rndis_buffer_address = (unsigned int)UdcRndisEp3VirAddr;
+		      ep->rndis_dma_phy_address = (u32)UdcRndisEp3PhyAddr;
+		      ep->rndis_buffer_length = dma_length;
+			ep->rndis_buffer_alloc = 1;
+		}
 		ep->rndis = 1;
 
 	}	
@@ -1531,13 +1538,14 @@ static void next_out_dma(struct vt8500_ep *ep, struct vt8500_req *req)
 		unsigned int dma_length = 65536;
 
 printk(KERN_INFO "rndis ooooo %d\n",req->req.length);
+		if (ep->rndis_buffer_alloc == 0) {
+		//retval = dma_alloc_coherent(ep->udc->dev, dma_length, &dma, GFP_ATOMIC);
 
-		retval = dma_alloc_coherent(ep->udc->dev,
-							dma_length, &dma, GFP_ATOMIC);
-
-		ep->rndis_buffer_address = (unsigned int)retval;
-		ep->rndis_dma_phy_address = (u32)dma;
+		    ep->rndis_buffer_address = (unsigned int)UdcRndisEp2VirAddr;
+		    ep->rndis_dma_phy_address = (u32)UdcRndisEp2PhyAddr;
 		ep->rndis_buffer_length = dma_length;
+			ep->rndis_buffer_alloc = 1;
+		}
 		ep->rndis = 1;
 	}
 	if ((ep->bEndpointAddress == 2) && (ep->rndis == 1) && (req->req.length > ep->rndis_buffer_length)) {
@@ -2069,6 +2077,189 @@ static int wmt_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 		return -EINVAL;
 	}
 
+
+	if (((ep->bEndpointAddress & 0x7F) != 0) && ep->queue.next == &req->queue) {
+
+		if (ep->bEndpointAddress == 1){
+			unsigned char btmp;
+			unsigned char bctrl0;			
+
+
+			bctrl0 = pDevReg->Bulk1EpControl & 0xE3;
+			pDevReg->Bulk1DesStatus &= 0xF7;
+			{
+				u32 dma_ccr = 0;
+
+				ep->stall_more_processing = 0;
+				wmt_pdma0_reset();
+				wmt_udc_pdma_des_prepare(ep->temp_dcmd,
+					ep->temp_bulk_dma_addr,
+					DESCRIPTOT_TYPE_LONG, TRANS_IN, 1);
+
+				pDevReg->Bulk1DesStatus = 0x00;
+				pDevReg->Bulk1DesTbytes2 |=
+					(ep->temp_dcmd >> 16) & 0x3;
+				pDevReg->Bulk1DesTbytes1 =
+					(ep->temp_dcmd >> 8) & 0xFF;
+				pDevReg->Bulk1DesTbytes0 =
+					ep->temp_dcmd & 0xFF;
+
+				/* set endpoint data toggle*/
+				btmp = pDevReg->Bulk1DesTbytes2 & 0x40;
+					
+				if (btmp)
+					ep->toggle_bit = 1;
+				else
+					ep->toggle_bit = 0;	
+				
+				if (ep->toggle_bit) {
+					/* BULKXFER_DATA1;*/
+					pDevReg->Bulk1DesTbytes2 |= 0x40;
+				} else {
+					/*(~BULKXFER_DATA1);*/
+					pDevReg->Bulk1DesTbytes2 &= 0xBF;
+				}
+
+				pDevReg->Bulk1DesStatus =
+					(BULKXFER_IOC | BULKXFER_IN);
+
+				/* DMA Channel Control Reg*/
+				/* Software Request + Channel Enable*/
+				dma_ccr = 0;
+				dma_ccr = DMA_RUN;
+				wmb();
+				pUdcDmaReg->DMA_Context_Control0 = dma_ccr; //neil
+				wmb();
+				pDevReg->Bulk1DesStatus |= BULKXFER_ACTIVE;
+
+			}
+			pDevReg->Bulk1EpControl |= 0x04;
+
+			while (pDevReg->Bulk1EpControl & 0x04);
+			pDevReg->Bulk1EpControl = bctrl0;			
+							
+		}
+		else if (ep->bEndpointAddress == 2){
+			unsigned char btmp;
+			unsigned char bctrl0;			
+
+
+			bctrl0 = pDevReg->Bulk2EpControl & 0xE3;
+			pDevReg->Bulk2DesStatus &= 0xF7;
+			{
+				u32 dma_ccr = 0;
+
+				ep->stall_more_processing = 0;
+				wmt_pdma1_reset();
+				wmt_udc_pdma_des_prepare(ep->temp_dcmd,
+					ep->temp_bulk_dma_addr,
+				DESCRIPTOT_TYPE_LONG, TRANS_OUT, 1);
+
+				pDevReg->Bulk2DesStatus = 0x00;
+				pDevReg->Bulk2DesTbytes2 |=
+					(ep->temp_dcmd >> 16) & 0x3;
+				pDevReg->Bulk2DesTbytes1 =
+					(ep->temp_dcmd >> 8) & 0xFF;
+				pDevReg->Bulk2DesTbytes0 =
+					ep->temp_dcmd & 0xFF;
+
+				/* set endpoint data toggle*/
+				btmp = pDevReg->Bulk2DesTbytes2 & 0x80;
+					
+				if (btmp)
+					ep->toggle_bit = 1;
+				else
+					ep->toggle_bit = 0;	
+				
+				if (ep->toggle_bit) {
+					/* BULKXFER_DATA1;*/
+					pDevReg->Bulk2DesTbytes2 |= 0x40;
+				} else {
+					/*(~BULKXFER_DATA1);*/
+					pDevReg->Bulk2DesTbytes2 &= 0xBF;
+				}
+
+				pDevReg->Bulk2DesStatus =
+					(BULKXFER_IOC | BULKXFER_IN);
+
+				/* DMA Channel Control Reg*/
+				/* Software Request + Channel Enable*/
+				dma_ccr = 0;
+				dma_ccr = DMA_RUN;
+				wmb();
+				pUdcDmaReg->DMA_Context_Control1 = dma_ccr; //neil
+				wmb();
+				pDevReg->Bulk2DesStatus |= BULKXFER_ACTIVE;
+
+			}
+			pDevReg->Bulk2EpControl |= 0x04;
+
+			while (pDevReg->Bulk2EpControl & 0x04);
+			pDevReg->Bulk2EpControl = bctrl0;				
+							
+		}
+		else if (ep->bEndpointAddress == 3){
+			unsigned char btmp;
+			unsigned char bctrl0;
+
+
+			bctrl0 = pDevReg->Bulk3EpControl & 0xE3;
+			pDevReg->Bulk3DesStatus &= 0xF7;
+			{
+				u32 dma_ccr = 0;
+
+				ep->stall_more_processing = 0;
+				wmt_pdma2_reset();
+				wmt_udc_pdma_des_prepare(ep->temp_dcmd,
+					ep->temp_bulk_dma_addr,
+					DESCRIPTOT_TYPE_LONG, TRANS_IN, 0);
+
+				pDevReg->Bulk3DesStatus = 0x00;
+				pDevReg->Bulk3DesTbytes2 |=
+					(ep->temp_dcmd >> 16) & 0x3;
+				pDevReg->Bulk3DesTbytes1 =
+					(ep->temp_dcmd >> 8) & 0xFF;
+				pDevReg->Bulk3DesTbytes0 =
+					ep->temp_dcmd & 0xFF;
+
+				/* set endpoint data toggle*/
+				btmp = pDevReg->Bulk3DesTbytes2 & 0x40;
+					
+				if (btmp)
+					ep->toggle_bit = 1;
+				else
+					ep->toggle_bit = 0;	
+				
+				if (ep->toggle_bit) {
+					/* BULKXFER_DATA1;*/
+					pDevReg->Bulk3DesTbytes2 |= 0x40;
+				} else {
+					/*(~BULKXFER_DATA1);*/
+					pDevReg->Bulk3DesTbytes2 &= 0xBF;
+				}
+
+				pDevReg->Bulk3DesStatus =
+					(BULKXFER_IOC | BULKXFER_IN);
+
+				/* DMA Channel Control Reg*/
+				/* Software Request + Channel Enable*/
+				dma_ccr = 0;
+				dma_ccr = DMA_RUN;
+				wmb();
+				pUdcDmaReg->DMA_Context_Control2 = dma_ccr; //neil
+				wmb();
+				pDevReg->Bulk3DesStatus |= BULKXFER_ACTIVE;
+
+			}
+			pDevReg->Bulk3EpControl |= 0x04;
+
+			while (pDevReg->Bulk3EpControl & 0x04);
+			pDevReg->Bulk3EpControl = bctrl0;				
+							
+		}
+
+	}
+	
 	done(ep, req, -ECONNRESET);
 
 	spin_unlock_irqrestore(&ep->udc->lock, irq_flags);
@@ -2357,6 +2548,122 @@ wmt_set_selfpowered(struct usb_gadget *gadget, int is_selfpowered)
 	return 0;
 }
 
+
+void reset_ep(void)
+{
+	pDevReg->Bulk1EpControl = 0; /* stop the bulk DMA*/
+	while (pDevReg->Bulk1EpControl & EP_ACTIVE) /* wait the DMA stopped*/
+		;
+
+	pDevReg->Bulk2EpControl = 0; /* stop the bulk DMA*/
+	while (pDevReg->Bulk2EpControl & EP_ACTIVE) /* wait the DMA stopped*/
+		;
+
+	pDevReg->Bulk3EpControl = 0; /* stop the bulk DMA*/
+	while (pDevReg->Bulk3EpControl & EP_ACTIVE) /* wait the DMA stopped*/
+		;
+
+	pDevReg->Bulk1DesStatus = 0x00;
+	pDevReg->Bulk2DesStatus = 0x00;
+	pDevReg->Bulk3DesStatus = 0x00;	
+
+	pDevReg->Bulk1DesTbytes0 = 0;
+	pDevReg->Bulk1DesTbytes1 = 0;
+	pDevReg->Bulk1DesTbytes2 = 0;
+
+	pDevReg->Bulk2DesTbytes0 = 0;
+	pDevReg->Bulk2DesTbytes1 = 0;
+	pDevReg->Bulk2DesTbytes2 = 0;
+
+	pDevReg->Bulk3DesTbytes0 = 0;
+	pDevReg->Bulk3DesTbytes1 = 0;
+	pDevReg->Bulk3DesTbytes2 = 0;
+
+	/* enable DMA and run the control endpoint*/
+	wmb();	
+
+	pDevReg->ControlEpControl = EP_RUN + EP_ENABLEDMA;
+	/* enable DMA and run the bulk endpoint*/
+	pDevReg->Bulk1EpControl = EP_RUN + EP_ENABLEDMA;
+	pDevReg->Bulk2EpControl = EP_RUN + EP_ENABLEDMA;
+	
+#ifdef USE_BULK3_TO_INTERRUPT
+	pDevReg->Bulk3EpControl = EP_RUN + EP_ENABLEDMA;
+#else	
+	pDevReg->InterruptEpControl = EP_RUN + EP_ENABLEDMA;
+#endif	
+	/* enable DMA and run the interrupt endpoint*/
+	/* UsbControlRegister.InterruptEpControl = EP_RUN+EP_ENABLEDMA;*/
+	/* run the USB controller*/
+	pDevReg->MiscControl3 = 0x3d;
+	wmb();
+	pDevReg->PortControl |= PORTCTRL_SELFPOWER;/* Device port control register - 22*/
+	pDevReg->CommandStatus = USBREG_RUNCONTROLLER;
+	wmb();
+	ControlState = CONTROLSTATE_SETUP;
+	USBState = USBSTATE_DEFAULT;
+	TestMode = 0;
+
+	/*status = wmt_udc_setup(odev, xceiv);*/
+	wmt_ep_setup_csr("ep0", 0, USB_ENDPOINT_XFER_CONTROL, 64);
+	wmt_ep_setup_csr("ep1in-bulk", (USB_DIR_IN | 1), USB_ENDPOINT_XFER_BULK, 512);
+	wmt_ep_setup_csr("ep2out-bulk", (USB_DIR_OUT | 2), USB_ENDPOINT_XFER_BULK, 512);
+	
+#ifdef USE_BULK3_TO_INTERRUPT	
+	wmt_ep_setup_csr("ep3in-int", (USB_DIR_IN | 3), USB_ENDPOINT_XFER_INT, 28);	
+#else
+	wmt_ep_setup_csr("ep3in-int", (USB_DIR_IN | 3), USB_ENDPOINT_XFER_INT, 8);	
+#endif	
+	
+}
+
+void reset_udc(void)
+{
+/*	if (!((*(volatile unsigned int *)(PM_CTRL_BASE_ADDR + 0x254))&0x00000080))*/
+/*		*(volatile unsigned int *)(PM_CTRL_BASE_ADDR + 0x254) |= 0x00000080;*/      /*DPM needed*/
+
+pDevReg->CommandStatus |= USBREG_RESETCONTROLLER;
+	wmb();
+
+	if ((*(volatile unsigned char *)(USB_IP_BASE + 0x249))&0x04) {
+		*(volatile unsigned char*)(USB_IP_BASE + 0x249)&= ~0x04;
+		mdelay(1);
+	}
+
+	pUSBMiscControlRegister5 = (unsigned char *)(USB_UDC_REG_BASE + 0x1A0);
+	*pUSBMiscControlRegister5 = 0x01;/*USB in normal operation*/
+	/* reset Bulk descriptor control*/
+	wmb();
+	
+	reset_ep();
+
+	pDevReg->SelfPowerConnect |= 0x10;//Neil
+	wmb();
+	/* enable all interrupt*/
+#ifdef FULL_SPEED_ONLY	
+	pDevReg->IntEnable = (INTENABLE_ALL | INTENABLE_FULLSPEEDONLY) ;/*0x70*/
+#else
+	pDevReg->IntEnable = INTENABLE_ALL;/*0x70*/
+#endif	
+	wmb();
+	/* set IOC on the Setup decscriptor to accept the Setup request*/
+	pDevReg->ControlDesControl = CTRLXFER_IOC;
+/*Neil_080731*/
+/* pullup_disable here and enable in /arch/arm/kernel/apm.c:395
+	apm_ioctl() to patch issue signal fail when resume when recive*/
+/* set_configuration time out.*/
+/*    pullup_enable(udc);//usb_gadget_probe_driver()*/
+	wmb();
+	wmt_pdma_reset();
+
+//	pullup_enable(udc);
+	pDevReg->FunctionPatchEn |= 0x20; /* HW attach process evaluation enable bit*/
+/*	pullup_disable(udc);*/
+/*Neil_080731*/
+	
+}
+
+
 /*
 static int can_pullup(struct vt8500_udc *udc)
 {
@@ -2372,6 +2679,10 @@ static void pullup_disable(struct vt8500_udc *udc)
 	wmb();
     gadget_connect=0;
     run_script(2);
+    
+    reset_ep();
+    wmt_pdma_reset();
+    
     
 } /*static void pullup_disable()*/
 
@@ -3223,111 +3534,6 @@ wmt_udc_dma_irq(int irq, void *_udc)//, struct pt_regs *r)
 	return status;
 }
 
-void reset_udc(void)
-{
-/*	if (!((*(volatile unsigned int *)(PM_CTRL_BASE_ADDR + 0x254))&0x00000080))*/
-/*		*(volatile unsigned int *)(PM_CTRL_BASE_ADDR + 0x254) |= 0x00000080;*/      /*DPM needed*/
-
-pDevReg->CommandStatus |= USBREG_RESETCONTROLLER;
-	wmb();
-
-	if ((*(volatile unsigned char *)(USB_IP_BASE + 0x249))&0x04) {
-		*(volatile unsigned char*)(USB_IP_BASE + 0x249)&= ~0x04;
-		mdelay(1);
-	}
-
-	pUSBMiscControlRegister5 = (unsigned char *)(USB_UDC_REG_BASE + 0x1A0);
-	*pUSBMiscControlRegister5 = 0x01;/*USB in normal operation*/
-	/* reset Bulk descriptor control*/
-	pDevReg->Bulk1EpControl = 0; /* stop the bulk DMA*/
-	wmb();
-	while (pDevReg->Bulk1EpControl & EP_ACTIVE) /* wait the DMA stopped*/
-		;
-
-	pDevReg->Bulk2EpControl = 0; /* stop the bulk DMA*/
-	while (pDevReg->Bulk2EpControl & EP_ACTIVE) /* wait the DMA stopped*/
-		;
-
-	pDevReg->Bulk3EpControl = 0; /* stop the bulk DMA*/
-	while (pDevReg->Bulk3EpControl & EP_ACTIVE) /* wait the DMA stopped*/
-		;
-
-	pDevReg->Bulk1DesStatus = 0x00;
-	pDevReg->Bulk2DesStatus = 0x00;
-	pDevReg->Bulk3DesStatus = 0x00;	
-
-	pDevReg->Bulk1DesTbytes0 = 0;
-	pDevReg->Bulk1DesTbytes1 = 0;
-	pDevReg->Bulk1DesTbytes2 = 0;
-
-	pDevReg->Bulk2DesTbytes0 = 0;
-	pDevReg->Bulk2DesTbytes1 = 0;
-	pDevReg->Bulk2DesTbytes2 = 0;
-
-	pDevReg->Bulk3DesTbytes0 = 0;
-	pDevReg->Bulk3DesTbytes1 = 0;
-	pDevReg->Bulk3DesTbytes2 = 0;
-
-	/* enable DMA and run the control endpoint*/
-	wmb();
-	pDevReg->ControlEpControl = EP_RUN + EP_ENABLEDMA;
-	/* enable DMA and run the bulk endpoint*/
-	pDevReg->Bulk1EpControl = EP_RUN + EP_ENABLEDMA;
-	pDevReg->Bulk2EpControl = EP_RUN + EP_ENABLEDMA;
-	
-#ifdef USE_BULK3_TO_INTERRUPT
-	pDevReg->Bulk3EpControl = EP_RUN + EP_ENABLEDMA;
-#else	
-	pDevReg->InterruptEpControl = EP_RUN + EP_ENABLEDMA;
-#endif	
-	/* enable DMA and run the interrupt endpoint*/
-	/* UsbControlRegister.InterruptEpControl = EP_RUN+EP_ENABLEDMA;*/
-	/* run the USB controller*/
-	pDevReg->MiscControl3 = 0x3d;
-	wmb();
-	pDevReg->PortControl |= PORTCTRL_SELFPOWER;/* Device port control register - 22*/
-	pDevReg->CommandStatus = USBREG_RUNCONTROLLER;
-	wmb();
-	ControlState = CONTROLSTATE_SETUP;
-	USBState = USBSTATE_DEFAULT;
-	TestMode = 0;
-
-	/*status = wmt_udc_setup(odev, xceiv);*/
-	wmt_ep_setup_csr("ep0", 0, USB_ENDPOINT_XFER_CONTROL, 64);
-	wmt_ep_setup_csr("ep1in-bulk", (USB_DIR_IN | 1), USB_ENDPOINT_XFER_BULK, 512);
-	wmt_ep_setup_csr("ep2out-bulk", (USB_DIR_OUT | 2), USB_ENDPOINT_XFER_BULK, 512);
-	
-#ifdef USE_BULK3_TO_INTERRUPT	
-	wmt_ep_setup_csr("ep3in-int", (USB_DIR_IN | 3), USB_ENDPOINT_XFER_INT, 28);	
-#else
-	wmt_ep_setup_csr("ep3in-int", (USB_DIR_IN | 3), USB_ENDPOINT_XFER_INT, 8);	
-#endif	
-
-	pDevReg->SelfPowerConnect |= 0x10;//Neil
-	wmb();
-	/* enable all interrupt*/
-#ifdef FULL_SPEED_ONLY	
-	pDevReg->IntEnable = (INTENABLE_ALL | INTENABLE_FULLSPEEDONLY) ;/*0x70*/
-#else
-	pDevReg->IntEnable = INTENABLE_ALL;/*0x70*/
-#endif	
-	wmb();
-	/* set IOC on the Setup decscriptor to accept the Setup request*/
-	pDevReg->ControlDesControl = CTRLXFER_IOC;
-/*Neil_080731*/
-/* pullup_disable here and enable in /arch/arm/kernel/apm.c:395
-	apm_ioctl() to patch issue signal fail when resume when recive*/
-/* set_configuration time out.*/
-/*    pullup_enable(udc);//usb_gadget_probe_driver()*/
-	wmt_pdma_reset();
-	wmb();
-	pullup_enable(udc);
-	pDevReg->FunctionPatchEn |= 0x20; /* HW attach process evaluation enable bit*/
-/*	pullup_disable(udc);*/
-/*Neil_080731*/
-	
-}
-
 static irqreturn_t
 wmt_udc_irq(int irq, void *_udc)//, struct pt_regs *r)
 {
@@ -3365,6 +3571,7 @@ wmt_udc_irq(int irq, void *_udc)//, struct pt_regs *r)
 #endif                
 //				wmt_pdma_reset();               
 reset_udc();
+pullup_enable(udc);
             }
 			else {//disconnct
 				//spin_unlock(&udc->lock);
@@ -4030,6 +4237,14 @@ wmt_udc_setup(struct platform_device *odev, struct otg_transceiver *xceiv)
 	VT8430_INT_EP("ep3in",  USB_DIR_IN  | 3, 8);
 #endif	
 
+	udc->ep[0].rndis_buffer_alloc = 0;
+	udc->ep[1].rndis_buffer_alloc = 0;
+	udc->ep[2].rndis_buffer_alloc = 0;
+	udc->ep[3].rndis_buffer_alloc = 0;
+	udc->ep[4].rndis_buffer_alloc = 0;
+	udc->ep[5].rndis_buffer_alloc = 0;//gri
+	udc->ep[6].rndis_buffer_alloc = 0;//gri
+
 	/*INFO("fifo mode %d, %d bytes not used\n", fifo_mode, 2048 - buf);*/
 	return 0;
 } /*wmt_udc_setup()*/
@@ -4122,7 +4337,10 @@ static void wmt_pdma2_reset(void)
 /*static void wmt_pdma_init(struct device *dev)*/
 static void wmt_pdma_init(struct device *dev)
 {
-
+	UdcRndisEp1VirAddr = (unsigned int) dma_alloc_coherent(dev, (size_t)65536, (dma_addr_t *)(&UdcRndisEp1PhyAddr), GFP_KERNEL|GFP_ATOMIC);
+	UdcRndisEp2VirAddr = (unsigned int) dma_alloc_coherent(dev, (size_t)65536, (dma_addr_t *)(&UdcRndisEp2PhyAddr), GFP_KERNEL|GFP_ATOMIC);
+	UdcRndisEp3VirAddr = (unsigned int) dma_alloc_coherent(dev, (size_t)65536, (dma_addr_t *)(&UdcRndisEp3PhyAddr), GFP_KERNEL|GFP_ATOMIC);
+  
 	UdcPdmaVirAddrLI = (unsigned int) dma_alloc_coherent(pDMADescLI, (size_t)0x100, (dma_addr_t *)(&UdcPdmaPhyAddrLI), GFP_KERNEL|GFP_ATOMIC);
 	UdcPdmaVirAddrSI = (unsigned int) dma_alloc_coherent(pDMADescSI, (size_t)0x100, (dma_addr_t *)(&UdcPdmaPhyAddrSI), GFP_KERNEL|GFP_ATOMIC);
 	UdcPdmaVirAddrLO = (unsigned int) dma_alloc_coherent(pDMADescLO, (size_t)0x100, (dma_addr_t *)(&UdcPdmaPhyAddrLO), GFP_KERNEL|GFP_ATOMIC);
@@ -4482,6 +4700,7 @@ static int wmt_udc_resume(struct platform_device *pdev)
 /*Neil_080731*/
 #else
 reset_udc();
+pullup_enable(udc);
 #endif
 	return wmt_wakeup(&udc->gadget);
 } /*wmt_udc_resume()*/

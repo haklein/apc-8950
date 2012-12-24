@@ -79,6 +79,7 @@
 #define VT1603_R2b  0x2b
 #define VT1603_R2c  0x2c
 #define VT1603_R2d  0x2d
+#define VT1603_R3f  0x3f
 #define VT1603_R40  0x40
 #define VT1603_R41  0x41
 #define VT1603_R42  0x42
@@ -125,5 +126,7 @@
 #define VT1603_RC2  0xc2
 #define VT1603_NULL 0xEF
 
+
+extern int vt1603_hwdep_ioctl(u8 rw_flag, u16 offset, u16 value);
 
 #endif

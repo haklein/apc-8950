@@ -227,7 +227,7 @@ static int kxti9_verify(struct kxti9_data *ti9)
 	/*** <end> DEBUG OUTPUT - REMOVE ***/
 	if (err < 0)
 		dev_err(&ti9->client->dev, "read err int source\n");
-	if (buf != 0x04)
+	if (buf != 0x04 && buf != 0x08) // jakie add 0x8 for kxtj9
 		err = -1;
 	return err;
 }
@@ -392,7 +392,7 @@ static int kxti9_device_power_on(struct kxti9_data *ti9)
 	enable_irq(ti9->irq);
 #endif
 	if (!ti9->hw_initialized) {
-		mdelay(100);
+		msleep(100);
 		err = kxti9_hw_init(ti9);
 		if (err < 0) {
 			kxti9_device_power_off(ti9);
@@ -1028,6 +1028,15 @@ static int kxti9_suspend(struct i2c_client *client, pm_message_t mesg)
 	//return kxti9_disable(ti9);
 	return 0;
 }
+
+static void kxti9_shutdown(struct i2c_client *client)
+{
+	struct kxti9_data *ti9 = i2c_get_clientdata(client);
+	if (atomic_read(&ti9->enabled)) {
+		flush_delayed_work_sync(&ti9->input_work);
+		cancel_delayed_work_sync(&ti9->input_work);
+	}
+}
 #endif
 
 static const struct i2c_device_id kxti9_id[] = {
@@ -1045,6 +1054,7 @@ static struct i2c_driver kxti9_driver = {
 	.remove = __devexit_p(kxti9_remove),
 	.resume = kxti9_resume,
 	.suspend = kxti9_suspend,
+	.shutdown = kxti9_shutdown,
 	.id_table = kxti9_id,
 };
 

@@ -131,7 +131,8 @@ static __u32 get_entry_len(struct logger_log *log, size_t off)
 static ssize_t do_read_log_to_user(struct logger_log *log,
 				   struct logger_reader *reader,
 				   char __user *buf,
-				   size_t count)
+				   size_t count,
+				   bool fReadAttach)
 {
 	size_t len;
 
@@ -141,20 +142,79 @@ static ssize_t do_read_log_to_user(struct logger_log *log,
 	 * the log, whichever comes first.
 	 */
 	len = min(count, log->size - reader->r_off);
-	if (copy_to_user(buf, log->buffer + reader->r_off, len))
-		return -EFAULT;
+	//if (copy_to_user(buf, log->buffer + reader->r_off, len))
+	//	return -EFAULT;
 
 	/*
 	 * Second, we read any remaining bytes, starting back at the head of
 	 * the log.
 	 */
-	if (count != len)
-		if (copy_to_user(buf + len, log->buffer, count - len))
-			return -EFAULT;
-
+	//if (count != len)
+		//if (copy_to_user(buf + len, log->buffer, count - len))
+			//return -EFAULT;
+    if (len < THREADOFFSET)
+	{
+	    if (copy_to_user(buf, log->buffer + reader->r_off, len))
+		    return -EFAULT;
+    	if (copy_to_user(buf + len, log->buffer, THREADOFFSET - len))
+		    return -EFAULT;
+		if (copy_to_user(buf + THREADOFFSET, log->buffer + THREADOFFSET - len + 4, count - THREADOFFSET - THREADTIME_SIZE))
+		    return -EFAULT;
+		if(fReadAttach)
+		{
+		    if (copy_to_user(buf + count - 4, log->buffer + THREADOFFSET - len , THREADTIME_SIZE))
+		        return -EFAULT;
+		}
+    }
+    else if (len == THREADOFFSET)
+    {
+	    if (copy_to_user(buf, log->buffer + reader->r_off, len))
+		    return -EFAULT;
+		if (copy_to_user(buf + THREADOFFSET, log->buffer + 4, count - THREADOFFSET - THREADTIME_SIZE))
+		    return -EFAULT;
+		if(fReadAttach)
+		{
+		    if (copy_to_user(buf + count - 4, log->buffer, THREADTIME_SIZE))
+		        return -EFAULT;
+		}
+		    
+    }
+    else if(len <= THREADOFFSET + THREADTIME_SIZE)
+    {
+	    if (copy_to_user(buf, log->buffer + reader->r_off, THREADOFFSET))
+		    return -EFAULT;
+		if (copy_to_user(buf + THREADOFFSET, log->buffer + THREADOFFSET + THREADTIME_SIZE - len, count - THREADOFFSET - THREADTIME_SIZE))
+		    return -EFAULT;
+        if (fReadAttach)
+        {
+		    if (copy_to_user(buf + count - 4, log->buffer + reader->r_off + THREADOFFSET, len - THREADOFFSET))
+			    return -EFAULT;
+			if (len != THREADOFFSET + THREADTIME_SIZE)
+			{
+		        if (copy_to_user(buf + count - 4 + len - THREADOFFSET, log->buffer, THREADOFFSET + THREADTIME_SIZE - len ))
+			        return -EFAULT;
+			}
+	    }
+    }
+    else
+    {
+	    if (copy_to_user(buf, log->buffer + reader->r_off, THREADOFFSET))
+		    return -EFAULT;
+		if (copy_to_user(buf + THREADOFFSET, log->buffer + reader->r_off + THREADOFFSET + 4, len - THREADOFFSET - THREADTIME_SIZE))
+		    return -EFAULT;
+        if (count != len)
+		    if (copy_to_user(buf + len, log->buffer, count - len))
+			    return -EFAULT;
+		if(fReadAttach)
+		{
+		    if (copy_to_user(buf + count - 4, log->buffer + reader->r_off +THREADOFFSET , THREADTIME_SIZE))
+		        return -EFAULT;
+		}
+    }
 	reader->r_off = logger_offset(reader->r_off + count);
 
-	return count;
+	//return count;
+	return count - 4;
 }
 
 /*
@@ -176,7 +236,7 @@ static ssize_t logger_read(struct file *file, char __user *buf,
 	struct logger_log *log = reader->log;
 	ssize_t ret;
 	DEFINE_WAIT(wait);
-
+    bool fReadAttach;
 start:
 	while (1) {
 		prepare_to_wait(&log->wq, &wait, TASK_INTERRUPTIBLE);
@@ -214,13 +274,20 @@ start:
 
 	/* get the size of the next entry */
 	ret = get_entry_len(log, reader->r_off);
-	if (count < ret) {
+	if (count < ret - THREADTIME_SIZE) {
 		ret = -EINVAL;
 		goto out;
 	}
-
+	else if(count < ret)
+	{
+	    fReadAttach = false;
+	}
+	else
+	{
+	    fReadAttach = true;
+	}
 	/* get exactly one entry from the log */
-	ret = do_read_log_to_user(log, reader, buf, ret);
+	ret = do_read_log_to_user(log, reader, buf, ret, fReadAttach);
 
 out:
 	mutex_unlock(&log->mutex);
@@ -629,7 +696,7 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 		reader = file->private_data;
 		if (log->w_off != reader->r_off)
-			ret = get_entry_len(log, reader->r_off);
+			ret = get_entry_len(log, reader->r_off) - THREADTIME_SIZE;
 		else
 			ret = 0;
 		break;

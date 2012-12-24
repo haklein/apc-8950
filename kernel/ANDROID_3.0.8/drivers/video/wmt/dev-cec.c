@@ -268,6 +268,14 @@ static long wmt_cec_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 		case CECIO_TX_LOGADDR:
 			wmt_cec_set_logical_addr((arg & 0xFF00)>>8,arg & 0xFF,1);
 			break;
+		case CECIO_RX_PHYADDR:
+			{
+				wmt_phy_addr_t parm;
+
+				parm.phy_addr = edid_get_hdmi_phy_addr();
+				ret = copy_to_user((void *)arg,(void *)&parm,sizeof(wmt_phy_addr_t));
+			}
+			break;
 		default:
 			DBGMSG("[CEC] *W* wmt_cec_ioctl cmd 0x%x\n",cmd);
 			break;
@@ -484,6 +492,16 @@ static struct platform_device wmt_cec_device = {
 static int __init wmt_cec_init(void)
 {
 	int ret;
+	char buf[100];
+	int varlen = 100;
+	unsigned int cec_enable = 0;
+
+	if( wmt_getsyspara("wmt.display.cec",buf,&varlen) == 0){
+		vpp_parse_param(buf,&cec_enable,1,0);
+	}
+	
+	if( cec_enable == 0 )
+		return 0;
 
 	DBGMSG(KERN_ALERT "Enter wmt_cec_init\n");
 	

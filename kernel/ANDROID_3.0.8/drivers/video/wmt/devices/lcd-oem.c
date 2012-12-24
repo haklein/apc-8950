@@ -95,6 +95,28 @@ lcd_parm_t lcd_oem_parm = {
 	.initial = lcd_oem_initial,		
 };
 
+lcd_parm_t lcd_oem_parm_1024x600 = {
+	.name = "ePAD 1024x600",			// HannStar HSD070PFW3
+	.fps = 60,						/* frame per second */
+	.bits_per_pixel = 24,
+	.capability = LCD_CAP_VSYNC_HI,
+	.timing = {
+		.pixel_clock = 45000000,	/* pixel clock */
+		.option = 0,				/* option flags */
+
+		.hsync = 4,				/* horizontal sync pulse */
+		.hbp = 50,					/* horizontal back porch */
+		.hpixel = 1024,				/* horizontal pixel */
+		.hfp = 50,					/* horizontal front porch */
+
+		.vsync = 4,					/* vertical sync pulse */
+		.vbp = 10,					/* vertical back porch */
+		.vpixel = 600,				/* vertical pixel */
+		.vfp = 10,					/* vertical front porch */
+	},
+	.initial = lcd_oem_initial,		
+};
+
 lcd_parm_t lcd_oem_parm_1024x768 = {
 	.name = "OEM 1024x768",			// VGA 1024x768
 	.fps = 60,						/* frame per second */
@@ -188,6 +210,7 @@ module_init(lcd_oem_init);
 lcd_parm_t *lcd_get_oem_parm(int resx,int resy)
 {
 	lcd_parm_t *oem_parm[] = {
+		&lcd_oem_parm_1024x600,
 		&lcd_oem_parm_1024x768,
 		&lcd_oem_parm_1366x768,
 		&lcd_oem_parm_800x480,

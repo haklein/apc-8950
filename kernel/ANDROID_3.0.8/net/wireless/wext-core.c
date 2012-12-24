@@ -18,6 +18,7 @@
 #include <net/netlink.h>
 #include <net/wext.h>
 #include <net/net_namespace.h>
+#include <linux/vmalloc.h>
 
 typedef int (*wext_ioctl_func)(struct net_device *, struct iwreq *,
 			       unsigned int, struct iw_request_info *,
@@ -763,7 +764,10 @@ static int ioctl_standard_iw_point(struct iw_point *iwp, unsigned int cmd,
 	}
 
 	/* kzalloc() ensures NULL-termination for essid_compat. */
-	extra = kzalloc(extra_size, GFP_KERNEL);
+	// Patch page allocation failure issue {
+	//extra = kzalloc(extra_size, GFP_KERNEL);
+	extra = vzalloc(extra_size);
+	// }
 	if (!extra)
 		return -ENOMEM;
 
@@ -835,7 +839,10 @@ static int ioctl_standard_iw_point(struct iw_point *iwp, unsigned int cmd,
 	}
 
 out:
-	kfree(extra);
+	// Patch page allocation failure issue {
+	//kfree(extra);
+	vfree(extra);
+	// }
 	return err;
 }
 

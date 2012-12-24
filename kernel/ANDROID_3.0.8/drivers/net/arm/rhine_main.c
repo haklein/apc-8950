@@ -683,9 +683,6 @@ rhine_found1(struct pci_dev *pcid, const struct pci_device_id *ent)
 		sscanf(eth_env_val,"%X",&eth);
 		if(!(eth & 0x10)) {
 			printk("Configure VIA Rhine driver disabled \n");
-            writeb(0xFF, GPIO_CTRL_GP17_MII0RX_BYTE_ADDR);
-	        writeb(0xFF, GPIO_CTRL_GP19_MII0TX_BYTE_ADDR);
-	        writeb(0xFF, GPIO_CTRL_GP20_MII0_BYTE_ADDR);
 			return -ENODEV;
 		}
         else {

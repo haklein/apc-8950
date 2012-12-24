@@ -389,9 +389,14 @@ __acquires(fc->lock)
 	 */
 	spin_unlock(&fc->lock);
 
-	while (req->state != FUSE_REQ_FINISHED)
+	while (req->state != FUSE_REQ_FINISHED) {
 		wait_event_freezable(req->waitq,
 				     req->state == FUSE_REQ_FINISHED);
+		if ((signal_pending(current)) && (req->state != FUSE_REQ_FINISHED)){
+			wait_event(req->waitq, req->state == FUSE_REQ_FINISHED);
+			break;
+		}			
+	}
 	spin_lock(&fc->lock);
 
 	if (!req->aborted)

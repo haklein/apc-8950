@@ -731,6 +731,15 @@ config MFD_TPS65910
 config TPS65911_COMPARATOR
 	tristate
 
+config FAN5365_PMIC
+        bool "Support FAN5365_PMIC with I2C"
+        depends on I2C=y
+        help
+          Support for the Wolfson Microelecronics FAN5365 PMIC
+          when controlled using I2C.  This driver provides common support
+          for accessing the device, additional drivers must be enabled in
+          order to use the functionality of the device.
+
 endif # MFD_SUPPORT
 
 menu "Multimedia Capabilities Port drivers"

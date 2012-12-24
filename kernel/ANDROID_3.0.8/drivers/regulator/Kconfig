@@ -302,6 +302,11 @@ config REGULATOR_TPS65910
 	depends on MFD_TPS65910
 	help
 	  This driver supports TPS65910 voltage regulator chips.
+config REGULATOR_WMTGPIO
+	bool "WMT GPIO PMIC"
+	help
+	  This driver supports the voltage regulators provided by
+	  this family of companion chips.
 
 endif
 

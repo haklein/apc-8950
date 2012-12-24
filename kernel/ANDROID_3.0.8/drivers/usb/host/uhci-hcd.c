@@ -90,6 +90,9 @@ static void suspend_rh(struct uhci_hcd *uhci, enum uhci_rh_state new_state);
 static void wakeup_rh(struct uhci_hcd *uhci);
 static void uhci_get_current_frame_number(struct uhci_hcd *uhci);
 
+unsigned char uhcd_uhci_sus = 0;
+extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);	
+
 /*
  * Calculate the link pointer DMA value for the first Skeleton QH in a frame.
  */
@@ -850,8 +853,28 @@ static int __init uhci_hcd_init(void)
 {
 	int retval = -ENOMEM;
 
+	char usb_env_pmc_name[] = "wmt.pmc.param";
+	char usb_env_pmc_val[40] = "0";
+	int varpmclen = 40;	
+	unsigned int usb_pmc_param[4];
+
 	if (usb_disabled())
 		return -ENODEV;
+
+	if(wmt_getsyspara(usb_env_pmc_name, usb_env_pmc_val, &varpmclen) == 0) {						
+			sscanf(usb_env_pmc_val,"%X:%X:%X:%X", &usb_pmc_param[0],&usb_pmc_param[1], &usb_pmc_param[2],&usb_pmc_param[3]);
+			//printk("usb_param[0]  =%x ,usb_param[1]=%x \n",usb_param[0],usb_param[1]);
+			if (usb_pmc_param[0]) {	
+				if(usb_pmc_param[1] & 0x00300000) {
+					uhcd_uhci_sus = 1;	
+					//printk("usb_storage_id  =%x , it should be small than or equal  4 .\n",usb_storage_id);
+				} else {
+						uhcd_uhci_sus = 0;// default port B
+				}
+			} else {			
+				uhcd_uhci_sus=0;  //disable
+ 			}		
+	}		
 
 	printk(KERN_INFO "uhci_hcd: " DRIVER_DESC "%s\n",
 			ignore_oc ? ", overcurrent ignored" : "");

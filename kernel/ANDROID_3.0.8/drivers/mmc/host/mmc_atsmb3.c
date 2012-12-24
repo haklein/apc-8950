@@ -50,11 +50,15 @@ WonderMedia Technologies, Inc.
 
 #define mprintk  
 
+extern void pmc_disable_wakeup_event(unsigned int wakeup_event);
+extern void pmc_enable_wakeup_event(unsigned int wakeup_event,unsigned int type);
+int SD3_card_state = 0; /*0: card remove >=1: card enable*/
 #if 0
 #define DBG(host, fmt, args...)	\
 	pr_debug("%s: %s: " fmt, mmc_hostname(host->mmc), __func__ , args)
 #endif
 #define ATSMB_TIMEOUT_TIME (HZ*2)
+#define SDIO_WIFI_PWR_OOB 1
 
 //add by jay,for modules support
 static u64 wmt_sdmmc3_dma_mask = 0xffffffffUL;
@@ -478,8 +482,8 @@ static inline void atsmb3_prep_cmd(struct atsmb_host *host,
     /*SDIO cmd 52 , 53*/
     if ((opcode == SD_IO_RW_DIRECT) ||
         (opcode == SD_IO_RW_EXTENDED)) {
-        *ATSMB2_RSP_TYPE = ATMSB_TYPE_R5;
-        *ATSMB2_RSP_TYPE |= BIT6;
+        *ATSMB3_RSP_TYPE = ATMSB_TYPE_R5;
+        *ATSMB3_RSP_TYPE |= BIT6;
     }
     /*SDIO cmd 5*/
     if ((opcode == SD_IO_SEND_OP_COND) && 
@@ -547,6 +551,7 @@ static inline void atsmb3_prep_cmd(struct atsmb_host *host,
 
 static inline void atsmb3_issue_cmd(void)
 {
+	wmb();
 	*ATSMB3_CTL |= ATSMB_START;
 	wmb();	
 }
@@ -899,7 +904,13 @@ static void atsmb3_start_data(struct atsmb_host *host)
 						 dma_mask,
 						 host);
 
+		/*Before write command pull busy state down, can't execute next 
+		command for SDIO device. because HW don't support SDIO R1b response clear
+		add by Eason 2012/08/09*/
+		while(!(*ATSMB3_CURBLK_CNT & BIT24))
+				;
 		atsmb3_issue_cmd();
+
 		wait_for_completion_timeout(&complete,
 			ATSMB_TIMEOUT_TIME*sg_transfer_len); /*ISR would completes it.*/
 
@@ -1594,6 +1605,36 @@ static void atsmb3_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	DBG("[%s] e\n",__func__);
 }
 /**********************************************************************
+Name  	 : atsmb3_set_clock
+Function    :.
+Calls		:
+Called by	:
+Parameter :
+Author 	 : Eason Chien
+History	:2012/7/19
+***********************************************************************/
+static int atsmb3_set_clock(struct mmc_host *mmc, unsigned int clock)
+{
+	if (clock == mmc->f_min) {
+        DBG("[%s]ATSMB3 Host 400KHz\n", __func__);            
+ 		return auto_pll_divisor(DEV_SDMMC3, SET_DIV, 1, 390);
+    }
+	else if (clock >= 50000000) {
+        DBG("[%s]ATSMB3 Host 50MHz\n", __func__);
+		return auto_pll_divisor(DEV_SDMMC3, SET_DIV, 2, 45);
+	} else if ((clock >= 25000000) && (clock < 50000000)) {
+		DBG("[%s]ATSMB3 Host 25MHz\n", __func__);
+		return auto_pll_divisor(DEV_SDMMC3, SET_DIV, 2, 24);
+	} else if ((clock >= 20000000) && (clock < 25000000)) {
+		DBG("[%s]ATSMB3 Host 20MHz\n", __func__);
+        return  auto_pll_divisor(DEV_SDMMC3, SET_DIV, 2, 20);
+	} else {
+        DBG("[%s]ATSMB3 Host 390KHz\n", __func__);
+        return auto_pll_divisor(DEV_SDMMC3, SET_DIV, 1, 390);
+	}
+}
+
+/**********************************************************************
 Name  	 : atsmb3_set_ios
 Function    :.
 Calls		:
@@ -1617,75 +1658,80 @@ static void atsmb3_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
             /*  disable SD Card power  */			
 			/*set SD3 power pin as GPO pin*/
-            if (SD3_function == SDIO_WIFI)
-                GPIO_OC_GP0_BYTE_VAL |= BIT6;
-            else {
-                GPIO_CTRL_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
-                GPIO_OC_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
-            }
+            GPIO_CTRL_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
+            GPIO_OC_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
             
 			/*set internal pull up*/
             GPIO_PULL_CTRL_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
 			/*set internal pull enable*/
             GPIO_PULL_EN_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
 			/*disable SD3 power*/
-            if (SD3_function == SDIO_WIFI)
-                GPIO_OD_GP0_BYTE_VAL &= ~BIT6;
-            else
+            if (SD3_function == SDIO_WIFI) {
+#ifdef SDIO_WIFI_PWR_OOB
+			/*disable INT mask 2012/07/23 eason add*/
+			pmc_disable_wakeup_event(8);
+			/*INT setting pull down in power off*/
+			GPIO_PULL_CTRL_GP2_WAKEUP_SUS_BYTE_VAL &= ~SDIO_WIFI_INT;
+			/* PSR setting GPO Lo*/
+   	        GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL &= ~SDIO_WIFI_PWR;
+#endif
+			}else
 			    GPIO_OD_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
 
 			/* Disable Pull up/down resister of SD Bus */
 			GPIO_PULL_CTRL_GP13_SD3_BYTE_VAL &=  ~(GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
 
 			/*  Config SD3 to GPIO  */
-            GPIO_CTRL_GP13_SD3_BYTE_VAL |= (GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
+	        GPIO_CTRL_GP13_SD3_BYTE_VAL |= (GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
 				
 			/*  SD3 all pins output low  */
 			GPIO_OD_GP13_SD3_BYTE_VAL &= ~(GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
 			
 			/*  Config SD3 to GPIO  */
-			GPIO_OC_GP13_SD3_BYTE_VAL |= (GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
+			GPIO_OC_GP13_SD3_BYTE_VAL |= (GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);		                  
 		                  
         }
-
 	} else if (ios->power_mode == MMC_POWER_UP) {
 		if (MMC3_DRIVER_VERSION == MMC_DRV_3481) {
             /*  disable SD Card power  */
             /*set SD3 power pin as GPO pin*/
-            if (SD3_function == SDIO_WIFI)
-                GPIO_OC_GP0_BYTE_VAL |= BIT6;
-            else {
-			    GPIO_CTRL_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
-			    GPIO_OC_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
-            }
-
+		    GPIO_CTRL_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
+		    GPIO_OC_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
 
             /*set internal pull up*/
 			GPIO_PULL_CTRL_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
 			/*set internal pull enable*/
 			GPIO_PULL_EN_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
 			/*disable SD3 power*/
-            if (SD3_function == SDIO_WIFI)
-                GPIO_OD_GP0_BYTE_VAL &= ~BIT6;
-            else
+            if (SD3_function == SDIO_WIFI) {
+#ifdef SDIO_WIFI_PWR_OOB
+				/*INT setting pull up in power on*/
+				GPIO_PULL_CTRL_GP2_WAKEUP_SUS_BYTE_VAL |= SDIO_WIFI_INT;
+				/*PSR setting GPO Hi*/
+				GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL |= SDIO_WIFI_PWR;
+#endif
+            }else
 			    GPIO_OD_GP18_SDWRSW_BYTE_VAL |= GPIO_SD3_POWER;
                  				
 
-            /*  Config SD PIN share  */
-			GPIO_PIN_SHARING_SEL_4BYTE_VAL |= GPIO_SD3_PinShare;
+			if (SD3_function != SDIO_WIFI) {
+				/*  Config SD PIN share  */
+				GPIO_PIN_SHARING_SEL_4BYTE_VAL |= GPIO_SD3_PinShare;
+			}
 
-            /* do not config GPIO_SD0_CD because ISR has already run,
+            /* do not config GPIO_SD3_CD because ISR has already run,
 			 * config card detect will issue ISR storm.
 			 */
 			/*  Config SD to GPIO  */
 			GPIO_CTRL_GP13_SD3_BYTE_VAL |= (GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
+			//GPIO_CTRL_GP21_I2C_BYTE_VAL |= GPIO_SD3_CD;
 			/*  SD all pins output low  */
 			GPIO_OD_GP13_SD3_BYTE_VAL &= ~(GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
+			//GPIO_OD_GP21_I2C_BYTE_VAL &= ~ GPIO_SD3_CD;
 			/*  Config SD to GPO   */
 			GPIO_OC_GP13_SD3_BYTE_VAL |= (GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
-			
-            
-            
+			//GPIO_OC_GP21_I2C_BYTE_VAL |= GPIO_SD3_CD;
+			        
 			/* Pull up/down resister of SD Bus */
            /*Disable Clock & CMD Pull enable*/
 			GPIO_PULL_EN_GP13_SD3_BYTE_VAL &= ~(GPIO_SD3_Clock | GPIO_SD3_Command);
@@ -1710,11 +1756,12 @@ static void atsmb3_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			spin_lock_irqsave(&host->lock, flags);
 
 			/*  enable SD3 Card Power  */
-            if (SD3_function == SDIO_WIFI)
-                GPIO_OD_GP0_BYTE_VAL |= BIT6;
-            else    
+            if (SD3_function == SDIO_WIFI) { 
+#ifdef SDIO_WIFI_PWR_OOB
+				GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL |= SDIO_WIFI_PWR;
+#endif
+            }else    
 			    GPIO_OD_GP18_SDWRSW_BYTE_VAL &= ~GPIO_SD3_POWER; 
-            
 
             /* enable SD3 output clock */
 			*ATSMB3_BUS_MODE |= ATSMB_CST;
@@ -1729,12 +1776,32 @@ static void atsmb3_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
         }
 	} else {
+#ifdef SDIO_WIFI_PWR_OOB
+			host->current_clock = atsmb3_set_clock(mmc,ios->clock);
+			/*Set CD ,WP ,DATA pin pull up*/
+			GPIO_PULL_CTRL_GP13_SD3_BYTE_VAL |= GPIO_SD3_Data;
+			/*Enable CD ,WP ,DATA  internal pull*/
+			GPIO_PULL_EN_GP13_SD3_BYTE_VAL |= GPIO_SD3_Data;
+
+			spin_unlock_irqrestore(&host->lock, flags);
+//			msleep(100);
+			spin_lock_irqsave(&host->lock, flags);
+
+			GPIO_CTRL_GP13_SD3_BYTE_VAL &= ~(GPIO_SD3_Data | GPIO_SD3_WriteProtect | GPIO_SD3_Command | GPIO_SD3_Clock);
+
+			spin_unlock_irqrestore(&host->lock, flags);
+//			msleep(10);
+			spin_lock_irqsave(&host->lock, flags);
+
+           /* enable SD3 output clock */
+			*ATSMB3_BUS_MODE |= ATSMB_CST;
+#endif
 		/*nothing to do when powering on.*/
 	}
 
 
-
-    if (ios->clock == mmc->f_min) {
+	host->current_clock = atsmb3_set_clock(mmc,ios->clock);
+/*    if (ios->clock == mmc->f_min) {
  		host->current_clock = auto_pll_divisor(DEV_SDMMC3, SET_DIV, 1, 390);
         DBG("[%s]ATSMB3 Host 400KHz\n", __func__);            
     }
@@ -1751,7 +1818,7 @@ static void atsmb3_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
         host->current_clock = auto_pll_divisor(DEV_SDMMC3, SET_DIV, 1, 390);
         DBG("[%s]ATSMB3 Host 390KHz\n", __func__);
 	}
-    
+*/    
 	if (ios->bus_width == MMC_BUS_WIDTH_8) {
 		*ATSMB3_EXT_CTL |= (0x04);
 	} else if (ios->bus_width == MMC_BUS_WIDTH_4) {
@@ -1778,11 +1845,41 @@ static void atsmb3_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	DBG("[%s] e\n",__func__);
 }
 
+/**********************************************************************
+Name  	 : atsmb3_get_cd
+Function    :
+Calls		:
+Called by	:
+Parameter :
+returns	: 
+Author 	 : Eason Chien
+History	: 2012/07/26
+***********************************************************************/
+static int atsmb3_get_cd(struct mmc_host *mmc)
+{
+	struct atsmb_host *host = mmc_priv(mmc);
+	unsigned long flags;
+	int card_present;
+	DBG("[%s] s SD3_card_state = %d\n",__func__,SD3_card_state);
+	spin_lock_irqsave(&host->lock, flags);
+    
+	if (SD3_card_state <= 0) {
+		card_present = 0;
+	} else {
+		card_present = 1;
+	}
+
+	spin_unlock_irqrestore(&host->lock, flags);
+    DBG("[%s] e\n",__func__);
+	return card_present;
+    
+}
 
 static const struct mmc_host_ops atsmb3_ops = {
 	.request	= atsmb3_request,
 	.set_ios	= atsmb3_set_ios,
 	.get_ro	= atsmb3_get_ro,
+	.get_cd = atsmb3_get_cd,
 	.get_slot_status = atsmb3_get_slot_status,
 	.dump_host_regs = atsmb3_dump_host_regs,
 	.enable_sdio_irq	= atsmb3_enable_sdio_irq,
@@ -1828,6 +1925,25 @@ static int __init atsmb3_probe(struct platform_device *pdev)
 
 		/* config CardDetect pin to SD function */
     	GPIO_CTRL_GP21_I2C_BYTE_VAL &= ~GPIO_SD3_CD;
+//Boardcom++
+#ifdef SDIO_WIFI_PWR_OOB
+		/*Enable PSR, INT  internal pull*/
+		GPIO_PULL_EN_GP2_WAKEUP_SUS_BYTE_VAL |= (SDIO_WIFI_PWR | SDIO_WIFI_INT);
+		/* Pull up/down resister of SDIO_WIFI PSR, INT */
+		GPIO_PULL_CTRL_GP2_WAKEUP_SUS_BYTE_VAL &= ~SDIO_WIFI_PWR;  /*pull down PSR*/
+		GPIO_PULL_CTRL_GP2_WAKEUP_SUS_BYTE_VAL &= ~SDIO_WIFI_INT; /*pull down INT*/
+		
+		/*  Config SDIO_WIFI to GPIO  */
+		GPIO_CTRL_GP2_WAKEUP_SUS_BYTE_VAL |= (SDIO_WIFI_PWR | SDIO_WIFI_INT);
+
+		/*  SDIO_WIFI PSR pin output low  */
+		GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL &= ~SDIO_WIFI_PWR;
+
+		/*  Config SDIO_WIFI to GPO   */
+		GPIO_OC_GP2_WAKEUP_SUS_BYTE_VAL |= SDIO_WIFI_PWR;
+		/*INT setting */
+		GPIO_PIN_SHARING_SEL_4BYTE_VAL |= SOIO_WIFI_WAKE_FUN;
+#endif
 	}
 	
 	
@@ -1871,8 +1987,8 @@ static int __init atsmb3_probe(struct platform_device *pdev)
 
 	mmc_host->f_min = 390425; /*390.425Hz = 400MHz/64/16*/
 	mmc_host->f_max = 50000000; /* in fact, the max frequency is 400MHz( = 400MHz/1/1)*/
-	mmc_host->caps = MMC_CAP_4_BIT_DATA | MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED | MMC_CAP_SDIO_IRQ;	
-                    /* |MMC_CAP_8_BIT_DATA;*/	//zhf: marked by James Tian
+	mmc_host->caps = MMC_CAP_4_BIT_DATA | MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED | MMC_CAP_SDIO_IRQ	
+                    |MMC_CAP_NONREMOVABLE;/* |MMC_CAP_8_BIT_DATA;*/	//zhf: marked by James Tian
 
 	mmc_host->max_segs = 128;	/*we use software sg. so we could manage even larger number.*/
 	
@@ -1941,7 +2057,7 @@ static int __init atsmb3_probe(struct platform_device *pdev)
 	/*enable card insertion interrupt and enable DMA and its Global INT*/
 	*ATSMB3_BLK_LEN |= (0xa000); /* also, we enable GPIO to detect card.*/
 	*ATSMB3_SD_STS_0 |= 0xff;
-	*ATSMB3_INT_MASK_0 |= 0x80; /*or 0x40?*/
+	//*ATSMB3_INT_MASK_0 |= 0x80; /*or 0x40?*/ move Register HOST there, marded by Eason
 
 	/*allocation dma descriptor*/
 	ret = atsmb3_alloc_desc(atsmb_host, sizeof(struct SD_PDMA_DESC_S) * MAX_DESC_NUM);
@@ -1951,10 +2067,14 @@ static int __init atsmb3_probe(struct platform_device *pdev)
 	}
 	printk(KERN_INFO "WMT ATSMB3 (AHB To SD/MMC3 Bus) controller registered!\n");
 
-    if (SD3_function == SDIO_WIFI)
+	/*Register HOST, power control by framework config*/
+    if (SD3_function == SDIO_WIFI) {
         mmc_add_host(mmc_host,false);
-    else
+		*ATSMB3_INT_MASK_0 &= ~0x80; /*if wifi and disable Slot device insertion*/
+	}else {
         mmc_add_host(mmc_host,true);
+		*ATSMB3_INT_MASK_0 |= 0x80; /*if SD/MMC and enable Slot device insertion*/
+	}
 
     mmc3_host_attr = mmc_host;
 	DBG("[%s] e1\n",__func__);
@@ -2051,7 +2171,7 @@ Parameter :
 Author 	 : Leo Lee
 History	:
 ***********************************************************************/
-int SD3_card_state = 0; /*0: card remove >=1: card enable*/
+//int SD3_card_state = 0; /*0: card remove >=1: card enable*/
 
 #ifdef CONFIG_PM
 static int atsmb3_suspend(struct platform_device *pdev, pm_message_t state)
@@ -2064,11 +2184,13 @@ static int atsmb3_suspend(struct platform_device *pdev, pm_message_t state)
 	if (mmc) {
 		
 		if (SD3_function == SDIO_WIFI) {
-			if (SD3_card_state > 0)
-				mmc_force_remove_card(mmc3_host_attr);
+			if (SD3_card_state > 0) {
+				/*enable wakeup event in suspend mode*/
+				pmc_enable_wakeup_event(8,0000);
+				/*If enter suspend in power on, kepp power*/
+				mmc->pm_flags |= MMC_PM_KEEP_POWER;	
+			}
 		}
-		
-		/*struct atsmb_host *host = mmc_priv(mmc);*/
 		ret = mmc_suspend_host(mmc);
 		if (ret == 0) {
 			/*disable all interrupt and clear status by resetting controller. */
@@ -2129,15 +2251,14 @@ static int atsmb3_resume(struct platform_device *pdev)
 		//}
 #endif
         if (SD3_function == SDIO_WIFI) {
-            GPIO_PULL_CTRL_GP21_I2C_BYTE_VAL &= ~GPIO_SD3_CD; /*pull down CD*/
-            GPIO_PULL_EN_GP21_I2C_BYTE_VAL |= GPIO_SD3_CD;
-			
 			if (SD3_card_state > 0) {
-				printk("[%s] mmc_resume_host s\n",__func__);
-				mmc_detect_change(mmc3_host_attr, 1*HZ/2); //check again by eason 2012/3/27
-				printk("[%s] mmc_resume_host e\n",__func__);
+				/*disable wakeup event in normal node*/
+				pmc_disable_wakeup_event(8);
+				DBG("[%s] mmc_resume_host s\n",__func__);
+				mmc_detect_change(mmc3_host_attr, 1*HZ/2);
+				DBG("[%s] mmc_resume_host e\n",__func__);
 			}
-			
+			ret = mmc_resume_host(mmc);
         } else {
 		    ret = mmc_resume_host(mmc);
         }
@@ -2233,7 +2354,7 @@ static ssize_t atsmb3_state_store(struct kobject *kobj, struct kobj_attribute *a
 static struct kobj_attribute atsmb3_state_attr = {	\
 	.attr	= {				\
 		.name = __stringify(state),	\
-		.mode = 0777,			\
+		.mode = 0755,			\
 	},					\
 	.show	= atsmb3_state_show,			\
 	.store	= atsmb3_state_store,		\

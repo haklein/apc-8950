@@ -199,7 +199,8 @@ static int vfb_check_var
 	struct fb_info *info            /*!<; // a pointer point to struct fb_info */
 )
 {
-
+	int timing_flag = 0;
+	
 	DBG_MSG("Enter\n");
 //	DBG_MSG("src-xres:%d,yres:%d\n", var->xres,var->yres);
 //	DBG_MSG("dest-xres:%d,yres:%d\n", var->xres,var->yres);
@@ -207,6 +208,8 @@ static int vfb_check_var
 //	var->xres_virtual = var->xres;
 //	var->yres_virtual = info->fix.smem_len / 
 //		(var->xres_virtual * (var->bits_per_pixel >> 3));
+
+//	vfb_show_var(var);
 
 	switch (var->bits_per_pixel) {
 	case 1:
@@ -265,6 +268,25 @@ static int vfb_check_var
 		break;
 	}
 
+//	var->xres_virtual = // align
+//	var->yres_virtual = // check out of memory
+	if( (var->xres != info->var.xres) || (var->yres != info->var.yres) ){
+		/* check EDID support */
+		DPRINT("[VFB] res(%d,%d)->(%d,%d)\n",info->var.xres,info->var.yres,var->xres,var->yres);
+	}
+
+	if( memcmp(&info->var.pixclock,&var->pixclock,4*9) != 0 ){
+		struct fb_var_screeninfo *p;
+		
+		DPRINT("[VFB] timing change\n");
+		p = &info->var;
+		DPRINT("pixclk %d,l %d,r %d,u %d,d %d,hs %d,vs %d,sync %x,vm %x\n",p->pixclock,p->left_margin,p->right_margin
+			,p->upper_margin,p->lower_margin,p->hsync_len,p->vsync_len,p->sync,p->vmode);
+		p = var;
+		DPRINT("pixclk %d,l %d,r %d,u %d,d %d,hs %d,vs %d,sync %x,vm %x\n",p->pixclock,p->left_margin,p->right_margin
+			,p->upper_margin,p->lower_margin,p->hsync_len,p->vsync_len,p->sync,p->vmode);
+		timing_flag = 1;
+	}
 	return 0;
 } /* End of vfb_check_var */
 
@@ -345,22 +367,13 @@ static int vfb_pan_display
 	struct fb_info *info            /*!<; // a pointer point to struct fb_info */
 )
 {
-	struct timeval t;
-	static struct timeval pre_t = {0,0};
-	unsigned long us;
-	
-	vpp_set_mutex(1,1);
-	
 	DBG_MSG("Enter vfb_pan_display\n");
 
-	do_gettimeofday(&t);
-	if( pre_t.tv_sec ){
-		us = (t.tv_sec - pre_t.tv_sec) * 1000000 + (t.tv_usec - pre_t.tv_usec);
-		if (us < 16667)
-			vpp_wait_vsync(1,1);
-	}
+	vpp_set_mutex(1,1);	
 	vpp_pan_display(var, info, 1);
-	do_gettimeofday(&pre_t);
+	if( var->activate & FB_ACTIVATE_VBL ){
+		vpp_wait_vsync(1,1);
+	}
 	vpp_set_mutex(1,0);
 	return 0;
 } /* End of vfb_pan_display */
@@ -388,7 +401,9 @@ static int vfb_ioctl
 
 	switch (_IOC_TYPE(cmd)) {
 	case VPPIO_MAGIC:
+		unlock_fb_info(info);
 		retval = vpp_ioctl(cmd,arg);
+		lock_fb_info(info);
 		break;
 	default:
 		break;
@@ -543,9 +558,11 @@ static int __init vfb_probe
 //		info->fix.smem_start = ge_vram_addr(B2M(FB_VRAM_SIZE));
 // #endif
 
-	info->fix.smem_start = g_vpp.mb[0];
-	info->fix.smem_len = g_vpp.mb_fb_size * VPP_MB_ALLOC_NUM;
-	info->screen_base = mb_phys_to_virt(info->fix.smem_start);
+	if( g_vpp.alloc_framebuf ){
+		info->fix.smem_start = g_vpp.mb[0];
+		info->fix.smem_len = g_vpp.mb_fb_size * VPP_MB_ALLOC_NUM;
+		info->screen_base = mb_phys_to_virt(info->fix.smem_start);
+	}
 
 #if 0
 	/* Set video memory */

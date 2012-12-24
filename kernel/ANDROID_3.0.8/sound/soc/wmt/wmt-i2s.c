@@ -71,20 +71,15 @@
 	printk(KERN_WARNING AUDIO_NAME ": " format "\n" , ## arg)
 
 struct wmt_i2s_asoc_data {
-	unsigned int bus_id;
+	int stream_id;
 	struct i2s_s i2s;
-	/*
-	 * Flags indicating is the bus already activated and configured by
-	 * another substream
-	 */
-	int active;
-	int configured;
-	struct timer_list delay_timer;
+	unsigned char HDMI_and_DAC0;
+	unsigned char HDMI_aud_enable;
+	/*struct timer_list delay_timer;*/
 	struct audio_stream_a s[2];
 };
 
 
-#define to_i2s_data(priv)	container_of((priv), struct wmt_i2s_asoc_data, bus_id)
 #define SNDRV_PCM_STREAM_ALL	2
 
 static void i2s_init(int mode);
@@ -94,10 +89,11 @@ static void i2s_exit(void);
 extern int vpp_set_audio(int format, int sample_rate, int channel);
 #endif
 
+extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
 
 static struct wmt_i2s_asoc_data i2s_data[NUM_LINKS] = {
 	{
-		.bus_id = 0,
+		.stream_id = SNDRV_PCM_STREAM_ALL,
 		.i2s = {
 				/* interrupt counters */
 				{0, 0, 0, 0, 0, 0, 0, 0},
@@ -132,6 +128,8 @@ static struct wmt_i2s_asoc_data i2s_data[NUM_LINKS] = {
 				/*.dma_cfg = dma_device_cfg_table[I2S_RX_DMA_REQ],*/
 			},
 		},
+		.HDMI_aud_enable = 0,
+		.HDMI_and_DAC0 = 0,
 	},
 };
 
@@ -156,13 +154,19 @@ wmt_i2s_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 }
 #endif
 
+#if 0
 static void delay_timer_handler(unsigned long data)
 {
 	DBG_DETAIL();
 }
+#endif
 
 void wmt_i2s_dac0_ctrl(int HDMI_audio_enable)
 {
+	/* check if output to HDMI audio and DAC0 at same time */
+	if (i2s_data->HDMI_and_DAC0)
+		return;
+	
 	if (HDMI_audio_enable) {
 		/* disable DAC#0, if HDMI Audio is enabled  */
 		/* assign ch0 to DAC#1_L, DAC#2_L, SPDIF_L,
@@ -173,17 +177,25 @@ void wmt_i2s_dac0_ctrl(int HDMI_audio_enable)
 
 		/* assign ch0 to DAC#3_L, ch1 to DAC#3_R */
 		ASMPFCHCFG1_VAL = 0x10;
-		
+
+		i2s_data->HDMI_aud_enable = 1;
 		info("HDMI Audio is enabled, disable dac0 of I2S");
 	}
 	else {
-		/* assign ch0 to DAC#0_L, DAC#1_L, DAC#2_L, SPDIF_L,
+		if (i2s_data->i2s.channels == 0x01) {
+			ASMPFCHCFG0_VAL = 0x00;
+			ASMPFCHCFG1_VAL = 0x00;
+		}
+		else {	
+			/* assign ch0 to DAC#0_L, DAC#1_L, DAC#2_L, SPDIF_L,
 			  	  ch1 to DAC#0_R, DAC#1_R, DAC#2_R, SPDIF_R */
-		ASMPFCHCFG0_VAL = 0x10101010;
+			ASMPFCHCFG0_VAL = 0x10101010;
 
-		/* assign ch0 to DAC#3_L, ch1 to DAC#3_R */
-		ASMPFCHCFG1_VAL = 0x10;
+			/* assign ch0 to DAC#3_L, ch1 to DAC#3_R */
+			ASMPFCHCFG1_VAL = 0x10;
+		}
 		
+		i2s_data->HDMI_aud_enable = 0;
 		info("HDMI Audio is disabled, enable dac0 of I2S");
 	}
 }
@@ -392,9 +404,11 @@ static void i2s_init(int mode)
 	i2s_data->i2s.format = SNDRV_PCM_FORMAT_S16_LE;
 
 #ifdef AUD_SPDIF_ENABLE
+	/* B1: 0 -> PCM, 1 -> Bitstream 
+	   B24 ~ B27: sample rate */
 	/* set ADGO channel status for 48K sample rate */
-	DGOCS0A_VAL = 0x02;
-	DGOCS1A_VAL = 0x02;
+	DGOCS0A_VAL = 0x02 << 24;
+	DGOCS1A_VAL = 0x02 << 24;
 	
 	/* enable ADGOITF and ADGOCKGEN for 48K sample rate */
 	DGOCFG_VAL = 0x82;
@@ -545,11 +559,12 @@ static int wmt_i2s_prepare(struct snd_pcm_substream *substream, struct snd_soc_d
 	
 
 	if ((runtime->rate != i2s_data->i2s.rate) || (runtime->format != i2s_data->i2s.format) ||
-			(runtime->channels != i2s_data->i2s.channels)) {
+			(runtime->channels != i2s_data->i2s.channels) || (stream_id != i2s_data->stream_id)) {
 		info("*** stream_id=%d, rate=%d, format=0x%x channels=%d ***",
 			stream_id, runtime->rate, runtime->format, runtime->channels);
 		i2s_data->i2s.format = runtime->format;
 		i2s_data->i2s.channels = runtime->channels;
+		i2s_data->stream_id = stream_id;
 	}		
 	else { 			
 		return 0;
@@ -569,7 +584,8 @@ static int wmt_i2s_prepare(struct snd_pcm_substream *substream, struct snd_soc_d
 			case SNDRV_PCM_FORMAT_U32_BE:	
 				ASMPFCFG_VAL |= ASMPF_EXCH_ENDIAN;
 				break;
-			default:	
+			default:
+				ASMPFCFG_VAL &= ~ASMPF_EXCH_ENDIAN;
 				break;
 		}
 
@@ -584,7 +600,8 @@ static int wmt_i2s_prepare(struct snd_pcm_substream *substream, struct snd_soc_d
 			case SNDRV_PCM_FORMAT_U32_BE:	
 				ASMPFCFG_VAL |= ASMPF_EXCH_FMT;
 				break;
-			default:	
+			default:
+				ASMPFCFG_VAL &= ~ASMPF_EXCH_FMT;
 				break;
 		}
 
@@ -607,27 +624,34 @@ static int wmt_i2s_prepare(struct snd_pcm_substream *substream, struct snd_soc_d
 			case SNDRV_PCM_FORMAT_U32_BE:
 				ASMPFCFG_VAL |= ASMPF_32BIT_SMP;
 				break;
+			case SNDRV_PCM_FORMAT_S24_LE:
+			case SNDRV_PCM_FORMAT_S24_BE:
+			case SNDRV_PCM_FORMAT_U24_LE:
+			case SNDRV_PCM_FORMAT_U24_BE:
+				info("*** Not Supported: fmt=24Bit ***");
 			default:	
 				break;
 		}
 
-		/* channel number check */
-		ASMPFCFG_VAL &= ~(BIT0 | BIT1 | BIT2 | BIT3);
-		ASMPFCFG_VAL |= runtime->channels;
+		if (!i2s_data->HDMI_aud_enable) {
+			/* channel number check */
+			ASMPFCFG_VAL &= ~(BIT0 | BIT1 | BIT2 | BIT3);
+			ASMPFCFG_VAL |= runtime->channels;
 
-		switch (runtime->channels) {
-			case 1:
-				ASMPFCHCFG0_VAL = 0x00;
-				ASMPFCHCFG1_VAL = 0x00;
-				break;
-			case 2:
-				ASMPFCHCFG0_VAL = 0x10101010;
-				ASMPFCHCFG1_VAL = 0x10;
-				break;
-			default:
-				ASMPFCHCFG0_VAL = 0x10101010;
-				ASMPFCHCFG1_VAL = 0x10;
-				break;	
+			switch (runtime->channels) {
+				case 1:
+					ASMPFCHCFG0_VAL = 0x00;
+					ASMPFCHCFG1_VAL = 0x00;
+					break;
+				case 2:
+					ASMPFCHCFG0_VAL = 0x10101010;
+					ASMPFCHCFG1_VAL = 0x10;
+					break;
+				default:
+					ASMPFCHCFG0_VAL = 0x10101010;
+					ASMPFCHCFG1_VAL = 0x10;
+					break;	
+			}
 		}
 	}
 
@@ -757,8 +781,24 @@ struct snd_soc_dai_driver wmt_i2s_dai = {
 static int wmt_i2s_probe(struct platform_device *pdev)
 {
 	int ret;
+	unsigned char buf[80];
+	int varlen = sizeof(buf);
 	
 	DBG_DETAIL();
+
+	// get u-boot parameter
+	memset(buf, 0x0, sizeof(buf));
+	varlen = sizeof(buf);
+	ret = wmt_getsyspara("wmt.audio.ctrl", buf, &varlen);
+	if (ret == 0) {
+		sscanf(buf, "%d", (int *)&i2s_data->HDMI_and_DAC0);
+
+		if (i2s_data->HDMI_and_DAC0 != 0)
+			i2s_data->HDMI_and_DAC0 = 1;
+	}
+	else {
+		i2s_data->HDMI_and_DAC0 = 0;
+	}
 	
 	i2s_data->s[0].dma_cfg = dma_device_cfg_table[AHB1_AUD_DMA_REQ_1];
 	i2s_data->s[1].dma_cfg = dma_device_cfg_table[AHB1_AUD_DMA_REQ_0];
@@ -767,8 +807,8 @@ static int wmt_i2s_probe(struct platform_device *pdev)
 	
 	spin_lock_init(&i2s_data->s[0].dma_lock);
 	spin_lock_init(&i2s_data->s[1].dma_lock);
-	init_timer(&i2s_data->delay_timer);
-	i2s_data->delay_timer.function = delay_timer_handler;
+	/*init_timer(&i2s_data->delay_timer);
+	i2s_data->delay_timer.function = delay_timer_handler;*/
 
 	/* register with the ASoC layers */
 	ret = snd_soc_register_dai(&pdev->dev, &wmt_i2s_dai);

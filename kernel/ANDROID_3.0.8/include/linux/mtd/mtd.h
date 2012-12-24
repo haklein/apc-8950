@@ -233,6 +233,7 @@ struct mtd_info {
 	int (*write_oob) (struct mtd_info *mtd, loff_t to,
 			 struct mtd_oob_ops *ops);
 
+	int (*get_para) (struct mtd_info *mtd, int chip);
 	/*
 	 * Methods to access the protection register area, present in some
 	 * flash devices. The user data is one time programmable but the
@@ -286,7 +287,14 @@ struct mtd_info {
 	 * supposed to be called by MTD users */
 	int (*get_device) (struct mtd_info *mtd);
 	void (*put_device) (struct mtd_info *mtd);
+	int blkcnt;
+	int pagecnt;
 	int dwECCBitNum;
+	int dwRetry;
+	int dwRdmz;
+	int dwDDR;
+	int id;
+	int id2;
 };
 
 static inline struct mtd_info *dev_to_mtd(struct device *dev)

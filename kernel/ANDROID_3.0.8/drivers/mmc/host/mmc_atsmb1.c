@@ -1665,17 +1665,25 @@ static void atsmb1_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
             /* enable SD1 PIN share */
             GPIO_PIN_SHARING_SEL_4BYTE_VAL |= GPIO_SD1_PinShare;             
 
+			/* do not config GPIO_SD1_CD because ISR has already run,
+			 * config card detect will issue ISR storm.
+			 */
             /*  Config SD to GPIO  */   
 			GPIO_CTRL_GP15_NAND_7_0_BYTE_VAL |= GPIO_SD1_Data;
-			GPIO_CTRL_GP29_NAND_CFG_1_BYTE_VAL |= GPIO_SD1_WriteProtect;
+			GPIO_CTRL_GP28_NAND_CFG_0_BYTE_VAL |= (GPIO_SD1_Command | GPIO_SD1_Clock);
+			GPIO_CTRL_GP29_NAND_CFG_1_BYTE_VAL |= (GPIO_SD1_WriteProtect |GPIO_SD1_RSTN); //| GPIO_SD1_CD);			
 
 			/*  SD all pins output low  */
 			GPIO_OD_GP15_NAND_7_0_BYTE_VAL&= ~GPIO_SD1_Data;
-			GPIO_OD_GP29_NAND_CFG_1_BYTE_VAL&= ~GPIO_SD1_WriteProtect;
+			GPIO_OD_GP28_NAND_CFG_0_BYTE_VAL &= ~(GPIO_SD1_Command | GPIO_SD1_Clock);
+			GPIO_OD_GP29_NAND_CFG_1_BYTE_VAL &= ~(GPIO_SD1_WriteProtect |GPIO_SD1_RSTN); //| GPIO_SD1_CD);
 
 			/*  Config SD to GPO   */
 			GPIO_OC_GP15_NAND_7_0_BYTE_VAL |= GPIO_SD1_Data;
-			GPIO_OC_GP29_NAND_CFG_1_BYTE_VAL |= GPIO_SD1_WriteProtect;
+			GPIO_OC_GP28_NAND_CFG_0_BYTE_VAL |= (GPIO_SD1_Command | GPIO_SD1_Clock);
+			GPIO_OC_GP29_NAND_CFG_1_BYTE_VAL |= (GPIO_SD1_WriteProtect |GPIO_SD1_RSTN); //| GPIO_SD1_CD);
+			/* stop SD output clock */
+			*ATSMB1_BUS_MODE &= ~ATSMB_CST;
 
 			/* Pull up/down resister of SD Bus */
 			/*Disable Clock & CMD Pull enable*/
@@ -1709,8 +1717,8 @@ static void atsmb1_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
             /* Config SD1 back to function  */
             GPIO_CTRL_GP15_NAND_7_0_BYTE_VAL &= ~GPIO_SD1_Data;
-			GPIO_CTRL_GP29_NAND_CFG_1_BYTE_VAL &= ~GPIO_SD1_WriteProtect;
-			GPIO_CTRL_GP29_NAND_CFG_1_BYTE_VAL &= ~GPIO_SD1_CD;           
+			GPIO_CTRL_GP28_NAND_CFG_0_BYTE_VAL &= ~(GPIO_SD1_Command | GPIO_SD1_Clock);
+			GPIO_CTRL_GP29_NAND_CFG_1_BYTE_VAL &= ~(GPIO_SD1_WriteProtect | GPIO_SD1_CD | GPIO_SD1_RSTN);
 
         }
 	} else {

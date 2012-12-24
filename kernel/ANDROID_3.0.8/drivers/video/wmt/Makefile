@@ -15,9 +15,9 @@ obj-$(CONFIG_FB_WMT) += vpu.o lvds.o
 obj-$(CONFIG_WMT_HDMI) += hdmi.o hdmi_cp.o
 obj-$(CONFIG_FB_WMT) += dev-vpp.o vpp-osif.o
 obj-$(CONFIG_WMT_CEC) += cec.o dev-cec.o
+obj-y += dev-virtual.o
 
-# wmt ge
-obj-$(CONFIG_FB_WMT_GE) += mali.o
+obj-$(CONFIG_FB_WMT) += mali.o
 obj-$(CONFIG_FB_WMT_GE) += ge/
 
 # wmt vpu fb

@@ -2304,6 +2304,8 @@ int mmc_resume_host(struct mmc_host *host)
 				pm_runtime_enable(&host->card->dev);
 			}
 		}
+//for boardcom test
+				mmc_set_ios(host);
 		BUG_ON(!host->bus_ops->resume);
 		err = host->bus_ops->resume(host);
 		if (err) {

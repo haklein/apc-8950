@@ -38,6 +38,7 @@
 #include "wmt_swmixer.h"
 
 #define NULL_DMA                ((dmach_t)(-1))
+//#define WMT_FMT_TRANS_BY_SW	1
 
 /*
  * Debug
@@ -68,7 +69,9 @@
 	printk(KERN_WARNING AUDIO_NAME ": " format "\n" , ## arg)
 
 
+#ifdef WMT_FMT_TRANS_BY_SW
 static struct snd_dma_buffer dump_buf[1];/*Used to dump mono data*/
+#endif
 
 static const struct snd_pcm_hardware wmt_pcm_hardware = {
 	.info			= SNDRV_PCM_INFO_MMAP |
@@ -212,9 +215,10 @@ static void audio_process_dma(struct audio_stream_a *s)
 
 #ifdef CONFIG_SND_WMT_SOC_I2S		
 		if (!strcmp(wmt_dai_name, "i2s")) {
+			//printk(KERN_ERR  "audio_process_dma: format=0x%x, channels=0x%x \n", runtime->format, runtime->channels);
+			
+#ifdef WMT_FMT_TRANS_BY_SW
 			if (stream_id == SNDRV_PCM_STREAM_PLAYBACK) {
-				//printk(KERN_ERR  "audio_process_dma: format=0x%x, channels=0x%x \n", runtime->format, runtime->channels);
-				
 				wmt_sw_u2s(runtime->format, (unsigned char *)runtime->dma_buffer_p->area+offset, dma_size);
 				
 				if (((runtime->channels == 1) && (runtime->format == SNDRV_PCM_FORMAT_S16_LE)) ||
@@ -254,6 +258,13 @@ static void audio_process_dma(struct audio_stream_a *s)
 				}
 				ret = wmt_start_dma(s->dmach, runtime->dma_addr + offset, 0, dma_size);
 			}
+#else
+			if ((stream_id == SNDRV_PCM_STREAM_PLAYBACK) && (wfd_audbuf.enable)) {
+				wmt_pcm_wfd_update(runtime->dma_buffer_p->area + offset, dma_size);
+			}
+			
+			ret = wmt_start_dma(s->dmach, runtime->dma_addr + offset, 0, dma_size);
+#endif
 		}
 #endif
 #ifdef CONFIG_SND_WMT_SOC_AC97
@@ -494,6 +505,7 @@ static snd_pcm_uframes_t wmt_pcm_pointer(struct snd_pcm_substream *substream)
 
 #ifdef CONFIG_SND_WMT_SOC_I2S	
 	if (!strcmp(wmt_dai_name, "i2s")) {
+#ifdef WMT_FMT_TRANS_BY_SW
 		if (((runtime->channels == 1) && (runtime->format == SNDRV_PCM_FORMAT_S16_LE)) || 
 			((runtime->channels == 2) && (runtime->format == SNDRV_PCM_FORMAT_U8))) {
 			offset = bytes_to_frames(runtime, (ptr - dump_buf[stream_id].addr) >> 1);
@@ -509,6 +521,9 @@ static snd_pcm_uframes_t wmt_pcm_pointer(struct snd_pcm_substream *substream)
 		}	
 		else
 			offset = bytes_to_frames(runtime, ptr - runtime->dma_addr);
+#else
+		offset = bytes_to_frames(runtime, ptr - runtime->dma_addr);
+#endif
 	}
 #endif
 #ifdef CONFIG_SND_WMT_SOC_AC97
@@ -626,9 +641,11 @@ static int wmt_pcm_preallocate_dma_buffer(struct snd_pcm *pcm,
 					   &buf->addr, GFP_KERNEL);
 	
 	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
+#ifdef WMT_FMT_TRANS_BY_SW		
 		/* allocate buffer for format transfer */
 		dump_buf[0].area = dma_alloc_writecombine(pcm->card->dev, (4 * size),
 					   &(dump_buf[stream].addr), GFP_KERNEL);
+#endif
 
 		/* allocate buffer for WFD support */
 		wfd_audbuf.bytes = size;
@@ -669,10 +686,12 @@ static void wmt_pcm_free_dma_buffers(struct snd_pcm *pcm)
 		dma_free_writecombine(pcm->card->dev, buf->bytes,
 				      buf->area, buf->addr);
 		
+#ifdef WMT_FMT_TRANS_BY_SW		
 		if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			dma_free_writecombine(pcm->card->dev, 4 * buf->bytes,
 				      dump_buf[stream].area, dump_buf[stream].addr);
 		}
+#endif		
 		
 		buf->area = NULL;
 	}

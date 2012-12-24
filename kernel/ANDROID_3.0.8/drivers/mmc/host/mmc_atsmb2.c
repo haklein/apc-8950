@@ -1678,17 +1678,21 @@ static void atsmb2_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
             /*  Config SD PIN share  */
 			GPIO_PIN_SHARING_SEL_4BYTE_VAL |= GPIO_SD2_PinShare;
 
-            /* do not config GPIO_SD0_CD because ISR has already run,
+            /* do not config GPIO_SD2_CD because ISR has already run,
 			 * config card detect will issue ISR storm.
 			 */
 			/*  Config SD to GPIO  */
+			//GPIO_CTRL_GP21_I2C_BYTE_VAL |= GPIO_SD2_CD;
 			GPIO_CTRL_GP24_SD2KPAD_BYTE_VAL |= (GPIO_SD2_Data | GPIO_SD2_WriteProtect | GPIO_SD2_Command | GPIO_SD2_Clock);
 			GPIO_CTRL_GP26_KPAD_BYTE_VAL |= GPIO_SD2_Data_2;
 			/*  SD all pins output low  */
+			//GPIO_OD_GP21_I2C_BYTE_VAL &= ~GPIO_SD2_CD;
 			GPIO_OD_GP24_SD2KPAD_BYTE_VAL &= ~(GPIO_SD2_Data | GPIO_SD2_WriteProtect | GPIO_SD2_Command | GPIO_SD2_Clock);
+			GPIO_OD_GP26_KPAD_BYTE_VAL &= ~GPIO_SD2_Data_2;
 			/*  Config SD to GPO   */
+			//GPIO_OC_GP21_I2C_BYTE_VAL |= GPIO_SD2_CD;
 			GPIO_OC_GP24_SD2KPAD_BYTE_VAL |= (GPIO_SD2_Data | GPIO_SD2_WriteProtect | GPIO_SD2_Command | GPIO_SD2_Clock);
-			
+			GPIO_OC_GP26_KPAD_BYTE_VAL |= GPIO_SD2_Data_2;
             
             
 			/* Pull up/down resister of SD Bus */
@@ -2243,7 +2247,7 @@ static ssize_t atsmb2_state_store(struct kobject *kobj, struct kobj_attribute *a
 static struct kobj_attribute atsmb2_state_attr = {	\
 	.attr	= {				\
 		.name = __stringify(state),	\
-		.mode = 0777,			\
+		.mode = 0755,			\
 	},					\
 	.show	= atsmb2_state_show,			\
 	.store	= atsmb2_state_store,		\

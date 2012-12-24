@@ -345,10 +345,6 @@ static void vpu_set_RT_vtb(int Src_Height, int Height)
 void vpu_set_scale_enable(vpp_flag_t vscl_enable, vpp_flag_t hscl_enable)
 {
 	DBGMSG("V %d,H %d\n",vscl_enable,hscl_enable);
-	// if H scale down, V scale up then V scale up should set 0
-	if( (hscl_enable == 0) && (vscl_enable == 1) ){
-		vscl_enable = 0;
-	}
 	vppif_reg32_write(VPU_V_SCALEUP,vscl_enable);
 	vppif_reg32_write(VPU_H_SCALEUP,hscl_enable);
 }
@@ -371,19 +367,27 @@ void vpu_set_V_scale(unsigned int A,unsigned int B)
 	V_THR_DIV2 = A;
 //	DBGMSG("V step %d,sub step %d, div2 %d\r\n", V_STEP, V_SUB_STEP, V_THR_DIV2);
 
-	if( (vpu_get_timing_master() == VPP_MOD_VPU) && (p_scl->scale_mode == VPP_SCALE_MODE_BILINEAR) ){
+	if( (vpu_get_timing_master() == VPP_MOD_VPU) && (p_vpu->scale_mode == VPP_SCALE_MODE_BILINEAR) ){
 		vppif_reg32_write(VPU_DST_VXWIDTH,A-1);
 		vppif_reg32_write(VPU_VXWIDTH,B-1);
 	}
 	else {
 		// vppif_reg32_write(VPU_DST_VXWIDTH,A);
-		if( vpu_get_direct_path() == VPP_VPATH_GOVW ){
-			vppif_reg32_write(VPU_DST_VXWIDTH,vppif_reg32_read(GOVM_DISP_Y_CR)+1);
-		}
-		else {
-			unsigned int fb_w,img_w,offx,offy;
-			govrh_get_fb_info(p_govrh2,&fb_w,&img_w,&offx,&offy);
-			vppif_reg32_write(VPU_DST_VXWIDTH,img_w);
+		switch( vpu_get_direct_path() ){
+			default:
+			case VPP_VPATH_GOVW:
+				vppif_reg32_write(VPU_DST_VXWIDTH,vppif_reg32_read(GOVM_DISP_Y_CR)+1);
+				break;
+			case VPP_VPATH_VPU_GE:
+				vppif_reg32_write(VPU_DST_VXWIDTH,p_vpu->scl_fb.img_h);
+				break;
+			case VPP_VPATH_VPU:
+				{
+					vdo_framebuf_t fb;
+					govrh_get_framebuffer(p_govrh2,&fb);
+					vppif_reg32_write(VPU_DST_VXWIDTH,fb.img_h);
+				}
+				break;
 		}
 		vppif_reg32_write(VPU_VXWIDTH,B);
 	}
@@ -446,6 +450,12 @@ void vpu_set_scale(unsigned int SRC_W,unsigned int SRC_H,unsigned int DST_W,unsi
 
 	vpu_set_V_scale(DST_H,SRC_H);
 	vpu_set_RT_vtb(SRC_H,DST_H);
+	
+	// if H scale down, V scale up then V scale up should set 0
+//	if( (DST_W < SRC_W) && (DST_H > SRC_H) ){
+	if( (h_scale_up == 0) && (v_scale_up == 1) ){
+		v_scale_up = 0;
+	}
 	vpu_set_scale_enable(v_scale_up, h_scale_up);
 }
 
@@ -469,8 +479,18 @@ void vpu_set_csc_mode(vpp_csc_t mode)
 	vdo_color_fmt src_fmt,dst_fmt;
 
 	src_fmt = vpu_r_get_color_format();
-	dst_fmt = vppif_reg32_read(VPU_DIRPATH_ENABLE)? govrh_get_color_format(p_govrh2):VDO_COL_FMT_YUV444; // govw_get_hd_color_format();
-	dst_fmt = ( vpu_get_timing_master() == VPP_MOD_VPU )? vpu_w_get_color_format():dst_fmt;
+	switch( vpu_get_direct_path() ){
+		case VPP_VPATH_VPU:
+			dst_fmt = govrh_get_color_format(p_govrh2);
+			break;
+		case VPP_VPATH_VPU_GE:
+			dst_fmt = src_fmt;
+			break;
+		default:
+		case VPP_VPATH_GOVW:
+			dst_fmt = ( vpu_get_timing_master() == VPP_MOD_VPU )? vpu_w_get_color_format():VDO_COL_FMT_YUV444;
+			break;
+	}
 	mode = vpp_check_csc_mode(mode,src_fmt,dst_fmt,0);
 
 //	DPRINT("[VPU] csc mode %d,src %s,dst %s\n",mode,vpp_colfmt_str[src_fmt],vpp_colfmt_str[dst_fmt]);
@@ -577,7 +597,7 @@ void vpu_set_filter_mode(vpp_filter_mode_t mode,int enable)
 		vppif_reg32_write(VPU_FIELD_DEFLICKER,0);
 		vppif_reg32_write(VPU_FRAME_DEFLICKER,0);
 	}
-	
+
 	switch( mode ){
 		default:
 		case VPP_FILTER_SCALE: // scale mode
@@ -740,6 +760,11 @@ void vpu_r_set_fb_addr(unsigned int y_addr,unsigned int c_addr)
 	switch(vpu_get_filter_mode()){
 		default:
 		case VPP_FILTER_SCALE:
+			if( vppif_reg32_read(VPU_DEI_ENABLE) ){
+				vppif_reg32_out(REG_VPU_R_Y2SA,y_addr+offset_y);
+				vppif_reg32_out(REG_VPU_R_C2SA,c_addr+offset_c);
+				break;
+			}
 		case VPP_FILTER_FIELD_DEFLICKER:
 			vppif_reg32_out(REG_VPU_R_Y2SA,y_addr+offset_y+line_y);
 			vppif_reg32_out(REG_VPU_R_C2SA,c_addr+offset_c+line_c);
@@ -808,7 +833,14 @@ void vpu_r_set_framebuffer(vdo_framebuf_t *fb)
 	if( p_vpu->resx_visual == 0 ) return;
 	if( p_vpu->resy_visual == 0 ) return;
 
-	if( (p_vpu->pre_img_w != fb->img_w) || (p_vpu->pre_img_h != fb->img_h) 
+	if( vpu_get_timing_master() == VPP_MOD_VPU ){
+		SRC_W = fb->img_w;
+		SRC_H = fb->img_h;
+		DST_W = p_vpu->pre_vis_w;
+		DST_H = p_vpu->pre_vis_h;
+		p_vpu->pre_vis_w = 0;
+	}
+	else if( (p_vpu->pre_img_w != fb->img_w) || (p_vpu->pre_img_h != fb->img_h) 
 		|| (p_vpu->pre_vis_w != p_vpu->resx_visual) || (p_vpu->pre_vis_h != p_vpu->resy_visual) ){
 		SRC_W = p_vpu->pre_img_w = fb->img_w;
 		SRC_H = p_vpu->pre_img_h = fb->img_h;
@@ -872,9 +904,9 @@ void vpu_r_set_framebuffer(vdo_framebuf_t *fb)
 	vpu_set_csc_mode(p_vpu->fb_p->csc_mode);
 
 	if( (vppif_reg32_in(REG_DEI_EN) & 0x107) == 0x105 ){	// motion vector deinterlace
-		vpu_mvr_set_addr(fb->y_addr+(fb->fb_w*fb->fb_h)+1088);
-		vpu_mvr_set_width(SRC_W,2048);
-		vpu_mvr_set_field_mode(VPP_FLAG_ENABLE);
+		vpu_mvr_set_addr(fb->c_addr+(fb->c_addr - fb->y_addr)/2);
+		vpu_mvr_set_field_mode(VPP_FLAG_DISABLE);
+		vpu_mvr_set_width(SRC_W,VPU_MV_BUF_LEN);
 		vpu_mvr_set_enable(VPP_FLAG_ENABLE);
 	}
 	else {
@@ -965,8 +997,10 @@ void vpu_w_set_fb_width(unsigned int width,unsigned int buf_width)
 		case VDO_COL_FMT_RGB_565:
 		case VDO_COL_FMT_RGB_1555:
 			if( vpu_get_timing_master() == VPP_MOD_VPU ){
+#if 0
 				vppif_reg32_write(VPU_W_YBUFWID, buf_width/2);
 				break;
+#endif
 			}
 		default:
 			vppif_reg32_write(VPU_W_YBUFWID, buf_width);
@@ -1005,16 +1039,16 @@ void vpu_w_set_framebuffer(vdo_framebuf_t *fb)
 	vpu_w_set_color_format(fb->col_fmt);
 	vpu_w_set_fb_width(fb->img_w, fb->fb_w);
 
-	scl_fb = &p_scl->fb_p->fb;
+	scl_fb = &p_vpu->scl_fb;
 	vpu_set_scale(scl_fb->img_w, scl_fb->img_h, fb->img_w, fb->img_h);
 	{
 		int rec_h,rec_v;
 
 		h = v = 0;
 		rec_h = rec_v = 0;
-		if( p_scl->scale_mode != VPP_SCALE_MODE_REC_TABLE ){
+		if( p_vpu->scale_mode != VPP_SCALE_MODE_REC_TABLE ){
 			if( scl_fb->img_w > fb->img_w ){ // scale down
-				if( p_scl->scale_mode == VPP_SCALE_MODE_RECURSIVE ){
+				if( p_vpu->scale_mode == VPP_SCALE_MODE_RECURSIVE ){
 					if( (fb->img_w * 2) > scl_fb->img_w ){	// 1 > mode(3) > 1/2
 						h = 1;	// bilinear mode
 					}
@@ -1028,7 +1062,7 @@ void vpu_w_set_framebuffer(vdo_framebuf_t *fb)
 			}
 			
 			if( scl_fb->img_h > fb->img_h ){ // scale down
-				if( p_scl->scale_mode == VPP_SCALE_MODE_RECURSIVE ){			
+				if( p_vpu->scale_mode == VPP_SCALE_MODE_RECURSIVE ){			
 					if( (fb->img_h * 2) > scl_fb->img_h ){	// 1 > mode(3) > 1/2
 						v = 1;
 					}
@@ -1048,7 +1082,7 @@ void vpu_w_set_framebuffer(vdo_framebuf_t *fb)
 		vppif_reg32_write(VPU_TF_REC_H_ENABLE,rec_h);
 		vppif_reg32_write(VPU_TF_REC_V_ENABLE,rec_v);
 	}
-	p_scl->fb_p->set_csc(p_scl->fb_p->csc_mode);
+	vpu_set_csc_mode(p_vpu->fb_p->csc_mode);
 			
 	// scl TG
 	timing.total_pixel_of_line = (fb->img_w > scl_fb->img_w)?fb->img_w:scl_fb->img_w;
@@ -1059,15 +1093,15 @@ void vpu_w_set_framebuffer(vdo_framebuf_t *fb)
 		timing.total_line_of_frame = (fb->img_h> scl_fb->img_h)?fb->img_h:scl_fb->img_h;
 	}
 
-	timing.begin_pixel_of_active = 100;
-	timing.end_pixel_of_active = timing.total_pixel_of_line + 100;
-	timing.total_pixel_of_line = timing.total_pixel_of_line + 200;
+	timing.begin_pixel_of_active = 60;
+	timing.end_pixel_of_active = timing.total_pixel_of_line + 60;
+	timing.total_pixel_of_line = timing.total_pixel_of_line + 120;
 	timing.begin_line_of_active = 8;
 	timing.end_line_of_active = timing.total_line_of_frame + 8;
 	timing.total_line_of_frame = timing.total_line_of_frame + 16;
 	timing.line_number_between_VBIS_VBIE = 4;
 	timing.line_number_between_PVBI_VBIS = 10;
-	pixel_clock = timing.total_pixel_of_line * timing.total_line_of_frame * p_scl->fb_p->framerate;
+	pixel_clock = timing.total_pixel_of_line * timing.total_line_of_frame * 0x7fffffff;
 	vpu_set_timing(&timing,pixel_clock);
 
 }
@@ -1092,11 +1126,13 @@ void vpu_dei_set_mode(vpp_deinterlace_t mode)
 	int enable;
 	unsigned int yaddr,caddr;
 
+#if 0
 	if( vpu_get_timing_master() == VPP_MOD_VPU ){
 		vpu_dei_set_enable(VPP_FLAG_DISABLE);
 		vppif_reg32_out(REG_VPU_R_CROP2,0);
 		return;
 	}
+#endif
 
 	/* 	0:Weave(ByPass) : Top & Bottom field bypass
 		1:Bob : Top field duplicate
@@ -1152,6 +1188,41 @@ void vpu_dei_get_sum(unsigned int *ysum,unsigned int *usum,unsigned int *vsum)
 	*vsum = vppif_reg32_read(VPU_DEI_V_SUM);
 }
 
+void vpu_dei_set_param(vpp_deinterlace_t mode,int level)
+{
+	if( level < 16 ){	// 0 - weave, 15 - BOB, other adaptive
+		int i;
+
+		for(i=0;i<16;i++){
+			vpu_dei_set_range(i,(i==level)?0xff:0);
+		}
+	}
+	else {
+		switch(mode){
+			case VPP_DEI_MOTION_VECTOR:	// 0x1 : weave, 0x2 : bob
+				vppif_reg32_out(REG_DEI_RANGE_A,0x1000000);	// 0x0
+				vppif_reg32_out(REG_DEI_RANGE_B,0x00);	// 0x1
+				vppif_reg32_out(REG_DEI_RANGE_C,0x00000);	// 0x20000
+				vppif_reg32_out(REG_DEI_RANGE_D,0x02);
+				break;
+			case VPP_DEI_DYNAMIC:
+				vppif_reg32_out(REG_DEI_RANGE_A,0x0);
+				vppif_reg32_out(REG_DEI_RANGE_B,0x0);
+				vppif_reg32_out(REG_DEI_RANGE_C,0x40);
+				vppif_reg32_out(REG_DEI_RANGE_D,0xb0a09080);
+				break;
+			case VPP_DEI_ADAPTIVE_ONE:
+			case VPP_DEI_ADAPTIVE_THREE:
+			default:
+				vppif_reg32_out(REG_DEI_RANGE_A,0x20);
+				vppif_reg32_out(REG_DEI_RANGE_B,0x00);
+				vppif_reg32_out(REG_DEI_RANGE_C,0xff);
+				vppif_reg32_out(REG_DEI_RANGE_D,0x80);
+				break;
+		}
+	}
+}
+
 /*----------------------- VPU MV --------------------------------------*/
 void vpu_mvr_set_enable(vpp_flag_t enable)
 {
@@ -1185,7 +1256,7 @@ void vpu_mvr_set_addr(unsigned int addr)
 
 void vpu_mvr_set_width(unsigned int width,unsigned int fb_w)
 {
-	fb_w = (vppif_reg32_read(VPU_MVR_SRC_FMT))? (fb_w/256):(fb_w/128);
+//	fb_w = (vppif_reg32_read(VPU_MVR_SRC_FMT))? (fb_w/128):(fb_w/128);
 	vppif_reg32_write(VPU_MVR_LNSIZE,width);
 	vppif_reg32_write(VPU_MVR_FBW,fb_w);
 }
@@ -1403,12 +1474,13 @@ void vpu_proc_view(int read,vdo_view_t *view)
 	}
 }
 
+#define VPU_COMPLETE_INT VPP_INT_VPU_PVBI
 int vpu_scale_gov_path_in;
 unsigned int vpu_scale_govw_mif_en = 0;
 int vpu_scale_complete;
 
 #ifdef __KERNEL__
-static struct work_struct vpu_proc_scale_wq;
+//static struct work_struct vpu_proc_scale_wq;
 DECLARE_WAIT_QUEUE_HEAD(vpu_proc_scale_event);
 
 static void vpu_proc_scale_complete_work(struct work_struct *work)
@@ -1416,12 +1488,18 @@ static void vpu_proc_scale_complete_work(struct work_struct *work)
 static void vpu_proc_scale_complete_work(void)
 #endif
 {
-	vppm_set_int_enable(VPP_FLAG_ENABLE,VPP_INT_VPU_VBIS);
-	vpp_irqproc_work(VPP_INT_VPU_VBIS,(void *)vpp_irqproc_enable_vpu,0,1);
-	vppm_set_int_enable(VPP_FLAG_DISABLE,VPP_INT_VPU_VBIS);
+	vpu_set_enable(VPP_FLAG_DISABLE);
+	vpu_r_set_mif_enable(VPP_FLAG_DISABLE);
+	vpu_r_set_mif2_enable(VPP_FLAG_DISABLE);
 	vpu_set_timing_master(VPP_MOD_GOVW);
 
+#if 0
 	p_vpu->fb_p->set_framebuf(&p_vpu->fb_p->fb);
+	vpu_r_set_mif_enable(VPP_FLAG_DISABLE);
+	vpu_r_set_mif2_enable(VPP_FLAG_DISABLE);
+	vpu_set_enable(VPP_FLAG_DISABLE);
+#endif
+#if 0
 	if( vpu_scale_gov_path_in ){
 		mdelay(100);
 // 		govw_set_int_enable(VPP_FLAG_DISABLE,VPP_INT_ERR_GOVW_TG);
@@ -1441,6 +1519,7 @@ static void vpu_proc_scale_complete_work(void)
 // 		govw_set_int_enable(VPP_FLAG_ENABLE,VPP_INT_ERR_GOVW_TG);
 //		govm_set_in_path(gov_path_in,VPP_FLAG_ENABLE);
 	}
+#endif
 	vpu_scale_complete = 1;
 #ifdef __KERNEL__
 	wake_up_interruptible(&vpu_proc_scale_event);
@@ -1449,6 +1528,7 @@ static void vpu_proc_scale_complete_work(void)
 
 int vpu_proc_scale_complete(void *arg)
 {
+#if 0
 	if( vppif_reg32_read(VPU_INTSTS_TGERR) ){
 		unsigned int rd_cyc;
 		
@@ -1467,14 +1547,15 @@ int vpu_proc_scale_complete(void *arg)
 		return 1;
 	}
 scale_end:	
-	vppm_set_int_enable(VPP_FLAG_DISABLE,VPP_INT_VPU_VBIE);
+#endif
+	vppm_set_int_enable(VPP_FLAG_DISABLE,VPU_COMPLETE_INT);
 	vpu_w_set_mif_enable(VPP_FLAG_DISABLE);
-
-#ifdef __KERNEL__
+//#ifdef __KERNEL__
+#if 0
 	INIT_WORK(&vpu_proc_scale_wq, vpu_proc_scale_complete_work);
 	schedule_work(&vpu_proc_scale_wq);
 #else
-	vpu_proc_scale_complete_work();
+	vpu_proc_scale_complete_work(0);
 #endif
 	return 0;
 }
@@ -1496,6 +1577,7 @@ int vpu_proc_scale(vdo_framebuf_t *src_fb,vdo_framebuf_t *dst_fb)
 {
 	int ret = 0;
 
+#if 0
 	// scl mode
 	vpu_scale_gov_path_in = govm_get_in_path();
 	if( vpu_scale_gov_path_in & VPP_PATH_GOVM_IN_VPU ){
@@ -1507,26 +1589,33 @@ int vpu_proc_scale(vdo_framebuf_t *src_fb,vdo_framebuf_t *dst_fb)
 	else {
 		vpu_scale_gov_path_in = 0;
 	}
+#endif
 	vpu_set_timing_master(VPP_MOD_VPU);
 
-	p_scl->fb_p->fb = *src_fb;
-	p_scl->fb_p->set_framebuf(src_fb);
-
-	p_sclw->fb_p->fb = *dst_fb;		
-	p_sclw->fb_p->set_framebuf(dst_fb);
+	p_vpu->scl_fb = *src_fb;
+	p_vpu->pre_vis_w = dst_fb->img_w;
+	p_vpu->pre_vis_h = dst_fb->img_h;
+	vpu_r_set_framebuffer(src_fb);
+	vpu_w_set_framebuffer(dst_fb);
 
 	// scale process
+	vppif_reg32_out(REG_VPU_TG_STATUS+0x0,BIT0);
+	vppif_reg32_write(VPU_TG_ONE_SHOT,1);
+	vppm_set_int_enable(VPP_FLAG_ENABLE,VPU_COMPLETE_INT);
+	
+	vpu_set_enable(VPP_FLAG_ENABLE);
+	vpu_r_set_mif_enable(VPP_FLAG_ENABLE);
+	vpu_r_set_mif2_enable(VPP_FLAG_ENABLE);
 	vpu_w_set_mif_enable(VPP_FLAG_ENABLE);
 	vpu_set_tg_enable(VPP_FLAG_ENABLE);
-	vppif_reg32_out(REG_VPU_TG_STATUS+0x0,BIT0);
+
 	vpu_scale_complete = 0;
-	vppm_set_int_enable(VPP_FLAG_ENABLE,VPP_INT_VPU_VBIE);
-	if( p_scl->scale_sync ){
-		vpp_irqproc_work(VPP_INT_VPU_VBIE,vpu_proc_scale_complete,0,1);
+	if( p_vpu->scale_sync ){
+		vpp_irqproc_work(VPU_COMPLETE_INT,vpu_proc_scale_complete,0,1);
 		vpu_proc_scale_finish();
 	}
 	else {
-		vpp_irqproc_work(VPP_INT_VPU_VBIE,vpu_proc_scale_complete,0,0);
+		vpp_irqproc_work(VPU_COMPLETE_INT,vpu_proc_scale_complete,0,0);
 	}
 	return ret;
 }
@@ -1614,21 +1703,9 @@ void vpu_init(void *base)
 	vpu_r_set_threshold(0xf);
 	vpu_set_drop_line(VPP_FLAG_DISABLE);
 
-	vpu_r_set_framebuffer(&mod_p->fb_p->fb);
 	vpu_set_timing_master(VPP_MOD_GOVW);
-	// dei range value
-#if 1	// motion vector mode
-	vppif_reg32_out(REG_DEI_RANGE_A,0x0);
-	vppif_reg32_out(REG_DEI_RANGE_B,0x01);
-	vppif_reg32_out(REG_DEI_RANGE_C,0x20000);
-	vppif_reg32_out(REG_DEI_RANGE_D,0x0);
-#endif
-#if 0	// dynamic deinterlace mode
-	vppif_reg32_out(REG_DEI_RANGE_A,0x0);
-	vppif_reg32_out(REG_DEI_RANGE_B,0x0);
-	vppif_reg32_out(REG_DEI_RANGE_C,0x40);
-	vppif_reg32_out(REG_DEI_RANGE_D,0xb0a09080);
-#endif	
+	vpu_r_set_framebuffer(&mod_p->fb_p->fb);
+	vpu_dei_set_param(mod_p->dei_mode,0xFF);
 	vpu_dei_set_mode(mod_p->dei_mode);
 	vpu_set_reg_update(VPP_FLAG_ENABLE);
 	vpu_set_tg_enable(VPP_FLAG_DISABLE);
@@ -1678,7 +1755,7 @@ int vpu_mod_init(void)
 		vpu_mod_p->resy_visual = VPP_HD_DISP_RESY;
 		vpu_mod_p->posx = 0;
 		vpu_mod_p->posy = 0;
-		vpu_mod_p->dei_mode = VPP_DEI_DYNAMIC; // VPP_DEI_MOTION_VECTOR
+		vpu_mod_p->dei_mode = VPP_DEI_MOTION_VECTOR; // VPP_DEI_DYNAMIC
 		vpu_mod_p->pre_img_w = 0;
 		vpu_mod_p->pre_img_h = 0;
 		vpu_mod_p->pre_vis_w = 0;

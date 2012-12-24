@@ -492,14 +492,14 @@ static int mst_calibrate(void)
 static inline void mst_report(struct mst_data *mst)
 {
 	//if (mst->x||mst->y||mst->x2||mst->y2) {
-		input_report_abs(mst->dev, ABS_MT_TOUCH_MAJOR, mst->w);
+		//input_report_abs(mst->dev, ABS_MT_TOUCH_MAJOR, mst->w);
 		input_report_abs(mst->dev, ABS_MT_POSITION_X, mst->x);
 		input_report_abs(mst->dev, ABS_MT_POSITION_Y, mst->y);
 		input_report_abs(mst->dev, ABS_MT_TRACKING_ID, 0);
 		input_mt_sync(mst->dev);
 
 		if (mst->nt==2) {
-			input_report_abs(mst->dev, ABS_MT_TOUCH_MAJOR, mst->w2);
+			//input_report_abs(mst->dev, ABS_MT_TOUCH_MAJOR, mst->w2);
 			input_report_abs(mst->dev, ABS_MT_POSITION_X, mst->x2);
 			input_report_abs(mst->dev, ABS_MT_POSITION_Y, mst->y2);
 			input_report_abs(mst->dev, ABS_MT_TRACKING_ID, 1);
@@ -522,7 +522,7 @@ static void mst_i2c_work(struct work_struct *work)
 	mst->nt = reg_read(mst, MST_TOUCH);
 	
 	if (mst_pen_isup(mst->gpio)||mst->nt==0) {
-		input_report_abs(mst->dev, ABS_MT_TOUCH_MAJOR, 0);
+		//input_report_abs(mst->dev, ABS_MT_TOUCH_MAJOR, 0);
 		input_report_key(mst->dev, BTN_TOUCH, 0);
 		input_mt_sync(mst->dev);
 		input_sync(mst->dev);
@@ -635,7 +635,7 @@ static int mst_probe(struct platform_device *pdev)
 					BIT_MASK(EV_ABS);
 
 	__set_bit(BTN_TOUCH, input_dev->keybit);	
-	input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 256, 0, 0);
+	//input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 256, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_POSITION_X,
 						0, mst->x_resl, 0, 0);
 

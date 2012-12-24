@@ -91,8 +91,8 @@ static ssize_t device_read(struct file*, char*, size_t, loff_t*);
 static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 static int device_close(struct inode*, struct file*);
 
-static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg);
-static int device_i2c_resume(struct i2c_client *client);
+//static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg);
+//static int device_i2c_resume(struct i2c_client *client);
 static int __devinit device_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id);
 static int __devexit device_i2c_remove(struct i2c_client *client);
 static inline void device_i2c_correct_accel_sign(s16 *val);
@@ -182,8 +182,8 @@ static ssize_t DMT_delay_acc_store( struct device *dev, struct device_attribute 
 }
 
 static struct device_attribute DMT_attributes[] = {
-	__ATTR(enable_acc, 0666, DMT_enable_acc_show, DMT_enable_acc_store),
-	__ATTR(delay_acc,  0666, DMT_delay_acc_show,  DMT_delay_acc_store),
+	__ATTR(enable_acc, 0755, DMT_enable_acc_show, DMT_enable_acc_store),
+	__ATTR(delay_acc,  0755, DMT_delay_acc_show,  DMT_delay_acc_store),
 	__ATTR_NULL,
 };
 
@@ -376,6 +376,22 @@ void gsensor_set_offset(int val[3])
 		offset.v[i] = (s16) val[i];
 }
 
+static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg)
+{
+	return 0;
+}
+
+static int device_i2c_resume(struct i2c_client *client)
+{
+	return 0;
+}
+
+static void device_i2c_shutdown(struct i2c_client *client)
+{
+	flush_delayed_work_sync(&work);
+	cancel_delayed_work_sync(&work);
+}
+
 struct file_operations dmt_g_sensor_fops = {
 	.owner = THIS_MODULE,
 	.read = device_read,
@@ -402,6 +418,7 @@ static struct i2c_driver device_i2c_driver = {
 	.remove	= __devexit_p(device_i2c_remove),
 	.suspend = device_i2c_suspend,
 	.resume	= device_i2c_resume,
+	.shutdown = device_i2c_shutdown,
 	.id_table = device_i2c_ids,
 };
 
@@ -592,11 +609,6 @@ static inline void device_i2c_correct_accel_sign(s16 *val)
 	*val>>= (sizeof(s16) * BITS_PER_BYTE - 11);  
 }
 
-static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg)
-{
-	return 0;
-}
-
 static void DMT_work_func(struct work_struct *fakework)
 {
 	int i;
@@ -686,14 +698,6 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
 }
 
 static int __devexit device_i2c_remove(struct i2c_client *client)
-{
-#if DMT_DEBUG_DATA
-	IN_FUNC_MSG;
-#endif
-	return 0;
-}
-
-static int device_i2c_resume(struct i2c_client *client)
 {
 #if DMT_DEBUG_DATA
 	IN_FUNC_MSG;

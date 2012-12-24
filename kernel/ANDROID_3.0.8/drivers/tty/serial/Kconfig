@@ -760,6 +760,18 @@ config SERIAL_WMT_DUAL_DMA
       If you say N here, driver will not support dual dma transfer.
 
       Choose N here unless you really need to use dual dma transfer.
+      
+config UART_2_3_ENABLE
+    bool "UART_2_3 support"
+    depends on SERIAL_WMT
+    ---help---
+      Since WMT UART support UART2 and UART3.
+
+      If you say Y here, driver will select dual dma transfer.
+
+      If you say N here, driver will not support dual dma transfer.
+
+      Choose N here unless you really need to use dual dma transfer.
 
 
 config SERIAL_MRST_MAX3110

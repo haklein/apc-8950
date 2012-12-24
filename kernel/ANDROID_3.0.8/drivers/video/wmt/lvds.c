@@ -50,6 +50,8 @@ void lvds_set_power_down(int pwrdn)
 	DBG_DETAIL("(%d)\n",pwrdn);
 
 	vppif_reg32_write(LVDS_PD,pwrdn);
+	mdelay(1);
+	vppif_reg32_write(LVDS_PD_L2HA,pwrdn);
 }
 
 void lvds_set_enable(vpp_flag_t enable)
@@ -59,6 +61,7 @@ void lvds_set_enable(vpp_flag_t enable)
 	vppif_reg32_write(LVDS_CTL,(enable)? 2:0);	// LVDS(0x2) or HDMI(0x0)
 	vppif_reg32_write(LVDS_TRE_EN,(enable)?0:1);
 	vppif_reg32_write(LVDS_MODE,(enable)?1:0);
+	vppif_reg32_write(LVDS_RESA_EN,(enable)?0:1);
 }
 
 int lvds_get_enable(void)
@@ -69,6 +72,7 @@ int lvds_get_enable(void)
 void lvds_set_rgb_type(int bpp)
 {
 	int mode;
+	int mode_change = 0x2;
 
 	DBG_DETAIL("(%d)\n",bpp);
 
@@ -86,8 +90,10 @@ void lvds_set_rgb_type(int bpp)
 		case 24:
 		default:
 			mode = 0;
+			mode_change = 0x0;
 			break;
 	}
+	vppif_reg32_write(LVDS_TEST,mode_change);
 	vppif_reg32_write(LVDS_IGS_BPP_TYPE,mode);
 }
 
@@ -120,6 +126,7 @@ void lvds_reg_dump(void)
 
 #ifdef CONFIG_PM
 static unsigned int *lvds_pm_bk;
+static unsigned int lvds_pd_bk;
 void lvds_suspend(int sts)
 {
 	switch( sts ){
@@ -128,6 +135,8 @@ void lvds_suspend(int sts)
 		case 1: // disable tg
 			break;
 		case 2:	// backup register
+			lvds_pd_bk = vppif_reg32_read(LVDS_PD);
+			lvds_set_power_down(1);
 			lvds_pm_bk = vpp_backup_reg(REG_LVDS_BEGIN,(REG_LVDS_END-REG_LVDS_BEGIN));
 			break;
 		default:
@@ -141,6 +150,7 @@ void lvds_resume(int sts)
 		case 0:	// restore register
 			vpp_restore_reg(REG_LVDS_BEGIN,(REG_LVDS_END-REG_LVDS_BEGIN),lvds_pm_bk);
 			lvds_pm_bk = 0;
+			lvds_set_power_down(lvds_pd_bk);
 			break;
 		case 1:	// enable module
 			break;
@@ -161,11 +171,10 @@ void lvds_init(void)
 	vppif_reg32_write(LVDS_REG_UPDATE,1);
 	vppif_reg32_write(LVDS_PLL_R_F,0x1);
 	vppif_reg32_write(LVDS_PLL_CPSET,0x1);
-	vppif_reg32_write(LVDS_TRE_EN,0x1);
+	vppif_reg32_write(LVDS_TRE_EN,0x0);
 
-	vppif_reg32_write(LVDS_TEST,0x2);
 	vppif_reg32_write(LVDS_LDI_SHIFT_LEFT,1);
-	vppif_reg32_out(REG_LVDS_TEST2,0x35032);
+	vppif_reg32_out(REG_LVDS_TEST2,0x35832);
 }
 
 #endif /* WMT_FTBLK_LVDS */

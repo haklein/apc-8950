@@ -37,6 +37,10 @@
 #define MAC
 /*#define EXT_PCI*/
 
+#ifdef USB_HOST
+static char enable_usb_wake = 0;
+#endif
+
 /* #define CONFIG_PCI_DEBUG */
 ulong
 PCI_GetConfigRegisterDWORD(
@@ -232,8 +236,23 @@ wmt_read_config(
 				mask = 0xFF << 8*(where & 3);
 				*value = pci_config_shadow[devno][0][bar] & mask;
 				*value = (*value) >> 8*(where & 3);
-			} else
-				*value = 0;
+			} else {
+//				*value = 0;
+#if 1
+				if (enable_usb_wake) {
+					if (devno == INT_USB_EHCI)
+						*value = * (volatile unsigned char *)(0xfe007800 + where);
+					else if (devno == INT_USB_UHCI) {
+						*value = * (volatile unsigned char *)(0xfe007a00 + where);
+					}
+					else {
+						*value = * (volatile unsigned char *)(0xfe008c00 + where);
+					}
+				}
+				else
+						*value = 0;
+#endif
+			}
 			break;
 
 		case 2:
@@ -256,8 +275,23 @@ wmt_read_config(
 					
 				*value = * (volatile unsigned short *)(bar + where);
 					
-			}else
-				*value = 0;
+			}else {
+//				*value = 0;
+#if 1
+				if (enable_usb_wake) {
+					if (devno == INT_USB_EHCI)
+						*value = * (volatile unsigned short *)(0xfe007800 + where);
+					else if (devno == INT_USB_UHCI) {
+						*value = * (volatile unsigned short *)(0xfe007a00 + where);
+					}
+					else {
+						*value = * (volatile unsigned short *)(0xfe008c00 + where);
+					}
+				}
+				else
+					*value = 0;
+#endif
+			}		
 			break;
 
 		case 4:
@@ -265,8 +299,23 @@ wmt_read_config(
 				bar = (where & ~3)/4;
 				mask = 0xFFFFFFFF;
 				*value = pci_config_shadow[devno][0][bar] & mask;
-			} else
-				*value = 0;
+			} else {
+//				*value = 0;
+#if 1
+				if (enable_usb_wake) {
+					if (devno == INT_USB_EHCI)
+						*value = * (volatile unsigned int *)(0xfe007800 + where);
+					else if (devno == INT_USB_UHCI) {
+						*value = * (volatile unsigned int *)(0xfe007a00 + where);
+					}
+					else {
+						*value = * (volatile unsigned int *)(0xfe008c00 + where);
+					}
+				}
+				else 
+					*value = 0;
+#endif
+			}
 		}
 
 	default:
@@ -510,6 +559,20 @@ wmt_write_config(struct pci_bus *bus, unsigned int devfn, int where,
 				* (volatile unsigned short *)(bar + where) = value;	
 					
 			}
+			else if (where < 0xC0) {
+				if (devno == INT_USB_UHCI){
+					* (volatile unsigned short *)(0xfe007a00 + where) = value;
+					printk("****gri INT_USB_UHCI1 pci w =%x %x %x\n",size,where,value);
+				}
+				else if (devno == INT_USB_UHCI2){
+					* (volatile unsigned short *)(0xfe008c00 + where) = value;
+					printk("****gri INT_USB_UHCI2 pci w =%x %x %x\n",size,where,value);
+				}
+				else{
+					* (volatile unsigned short *)(0xfe007800 + where) = value;
+					printk("****gri INT_USB_EHCI pci w =%x %x %x\n",size,where,value);
+				}
+			}
 			break;
 		case 4:
 			if (where < 0x40) {
@@ -524,6 +587,20 @@ wmt_write_config(struct pci_bus *bus, unsigned int devfn, int where,
 				pci_config_shadow[devno][0][bar] &= pci_config_mask[devno][0][bar];
 				/* set the read only bits which may be clear when written. */
 				pci_config_shadow[devno][0][bar] |= pci_config_ro[devno][0][bar];
+			}
+			else if (where < 0xC0) {
+				if (devno == INT_USB_UHCI){
+					* (volatile unsigned int *)(0xfe007a00 + where) = value;
+					printk("****gri INT_USB_UHCI1 pci w =%x %x %x\n",size,where,value);
+				}
+				else if (devno == INT_USB_UHCI2){
+					* (volatile unsigned int *)(0xfe008c00 + where) = value;
+					printk("****gri INT_USB_UHCI2 pci w =%x %x %x\n",size,where,value);
+				}
+				else{
+					* (volatile unsigned int *)(0xfe007800 + where) = value;
+					printk("****gri INT_USB_EHCI pci w =%x %x %x\n",size,where,value);
+				}	
 			}
 			break;
 		}
@@ -1267,6 +1344,10 @@ void __init wmt_pci_preinit(void)
 #endif
 
 #ifdef USB_HOST
+	if (*((volatile unsigned char *)0xfe007862) & 0x80)
+		enable_usb_wake = 1;
+	else
+		enable_usb_wake = 0;
 	init_int_usb();
 #endif
 

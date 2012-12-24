@@ -144,9 +144,17 @@ WonderMedia Technologies, Inc.
 
 #define WMT_SND_I2C_BUS				0x00
 #define WMT_SND_SPI_BUS				0x01
-#define WMT_SND_LINE_IN				0x00
-#define WMT_SND_AMIC_IN				0x01
+
+#define WMT_SND_LINEIN_1			0x00
+#define WMT_SND_MICIN_1				0x01
 #define WMT_SND_DMIC_IN				0x02
+#define WMT_SND_LINEIN_12			0x03
+#define WMT_SND_LINEIN_2			0x04
+#define WMT_SND_MICIN_2				0x05
+#define WMT_SND_MICIN_12			0x06
+
+
+
 
 
 

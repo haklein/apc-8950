@@ -91,7 +91,7 @@ static unsigned char vt1603_classd_or_hp = 0; // 0: class-d
 //static unsigned char vt1603_line_or_mic  = 1; // 0: line    
                                               // 1: mic
 
-#define POLL_PERIOD    250 // ms
+#define POLL_PERIOD    500 // ms
 struct timer_list vt1603_timer;
 static struct work_struct vt1603_timer_work;
 static struct work_struct vt1603_hw_mute_work;
@@ -101,7 +101,6 @@ extern int wmt_i2c_xfer_continue_if_4(struct i2c_msg *msg,
 		unsigned int num,int bus_id);
 
 /* codec hw configuration */
-#define LEFT_MICIN_CAPTURE
 static int hw_mute_flag = 0;
 
 struct vt1603_conf_struct {
@@ -118,7 +117,14 @@ struct vt1603_conf_struct {
 	                               // 1: analog-mic
 	                               // 2: digital-mic
 	unsigned char volume_percent;
-	struct i2c_adapter *i2c_adap;								   
+	struct i2c_adapter *i2c_adap;
+	unsigned char headmic_det;	   // 0: disable headset mic detect     
+	                               // 1: enable headset mic detect
+	unsigned char classD_gain;	   // 0 ~ 7: Class-D AC boost gain
+								   // 0xFF: invalid value
+	struct snd_soc_codec *codec;
+	unsigned char in_record;
+	unsigned char trigger_stat;
 };
 static struct vt1603_conf_struct vt1603_conf;
 
@@ -368,6 +374,28 @@ static unsigned int vt1603_codec_read(struct snd_soc_codec *codec,
 	return cache[reg];
 }
 
+int vt1603_hwdep_ioctl(u8 rw_flag, u16 offset, u16 value)
+{
+	//info("rw_flag=%d, offset=0x%x, value=0x%x", rw_flag, offset, value);
+
+	if (rw_flag) {
+		/* open write register for DRC control and EQ only */
+		if (((offset >= VT1603_R0e) && (offset <= VT1603_R13)) ||
+			((offset >= VT1603_R28) && (offset <= VT1603_R3f)) ||
+			(offset == VT1603_R06)) {
+			snd_soc_write(vt1603_conf.codec, offset, value);
+		}
+		else {
+			info("write to offset 0x%x is not allowed", offset);
+		}
+		return 0;
+	}
+	else {
+		return snd_soc_read(vt1603_conf.codec, offset);
+	}
+}
+EXPORT_SYMBOL(vt1603_hwdep_ioctl);
+
 static void vt1603_regs_dump(struct snd_soc_codec *codec)
 {
 	int i = 0;
@@ -388,7 +416,7 @@ static int vt1603_reset(struct snd_soc_codec *codec)
 	vt1603_write(codec, VT1603_R60, 0x04);
 	vt1603_write(codec, VT1603_R60, 0xc4);  //reset DAC/ADC analog
 	
-	msleep(30);
+	//msleep(30);
 	return 0;
 }
 
@@ -397,14 +425,20 @@ static int vt1603_hp_power_up(struct snd_soc_codec *codec)
 	u16 reg;
 
 	DBG_DETAIL();
-	
+
+	/* disable mono mixing */
 	reg = snd_soc_read(codec, VT1603_R0d);
 	reg &= ~BIT4;
-	snd_soc_write(codec, VT1603_R0d, reg); 
+	snd_soc_write(codec, VT1603_R0d, reg);
+
+	/* make sure DAC R channel is enable */
+	reg = snd_soc_read(codec, VT1603_R62);
+	reg |= BIT4;
+	snd_soc_write(codec, VT1603_R62, reg);
 	
 	// set HP power up
 	reg = snd_soc_read(codec, VT1603_R68);
-	reg &= ~BIT4; // HP power up
+	reg &= ~BIT4;
 	snd_soc_write(codec, VT1603_R68, reg);
 	
 	return 0;
@@ -417,15 +451,16 @@ static int vt1603_classd_power_up(struct snd_soc_codec *codec)
 	DBG_DETAIL();
 				
 	if (vt1603_conf.stereo_or_mono) {
+		/* enable mono mixing */
 		reg = snd_soc_read(codec, VT1603_R0d);
 		reg |= BIT4;
 		snd_soc_write(codec, VT1603_R0d, reg);
-	} 
-	else {
-		reg = snd_soc_read(codec, VT1603_R0d);
+
+		/* disable DAC R channel */
+		reg = snd_soc_read(codec, VT1603_R62);
 		reg &= ~BIT4;
-		snd_soc_write(codec, VT1603_R0d, reg); 
-	}
+		snd_soc_write(codec, VT1603_R62, reg);
+	} 
 	
 	// set class-d power up
 	reg = snd_soc_read(codec, VT1603_R25);
@@ -656,26 +691,60 @@ static int vt1603_set_default_route(struct snd_soc_codec *codec)
 	reg |= BIT5+BIT4; // PGA power up
 	snd_soc_write(codec, VT1603_R67, reg);
 
-	// micboost: select input from Micin-L
+	/* record source select */
 	reg = snd_soc_read(codec, VT1603_R8e);
-	reg &= ~(BIT7 + BIT6 + BIT4); // Linein-LR and Micin R disable
-	reg |= BIT5;  // Micin-L enable
+	if ((vt1603_conf.headmic_det) ||
+		(vt1603_conf.record_src == WMT_SND_MICIN_2)) {
+		// Linein-LR and Micin-L disable, Micin-R enable
+		reg &= ~(BIT7 + BIT6 + BIT5);
+		reg |= BIT4;
+	}
+	else if (vt1603_conf.record_src == WMT_SND_LINEIN_1) {
+		// Micin-LR and Linein-R disable, Linein-L enable
+		reg &= ~(BIT6 + BIT5 + BIT4);
+		reg |= BIT7;
+	}
+	else if (vt1603_conf.record_src == WMT_SND_LINEIN_12) {
+		// Micin-LR disable, Linein-LR enable
+		reg &= ~(BIT5 + BIT4);
+		reg |= (BIT7 + BIT6);
+	}
+	else if (vt1603_conf.record_src == WMT_SND_LINEIN_2) {
+		// Micin-LR and Linein-L disable, Linein-R enable
+		reg &= ~(BIT7 + BIT5 + BIT4);
+		reg |= BIT6;
+	}
+	else if (vt1603_conf.record_src == WMT_SND_MICIN_12) {
+		// Linein-LR disable, Micin-LR enable
+		reg &= ~(BIT7 + BIT6);
+		reg |= (BIT5 + BIT4);
+	}
+	else {
+		// Linein-LR and Micin-R disable, Micin-L enable
+		reg &= ~(BIT7 + BIT6 + BIT4);
+		reg |= BIT5;
+	}
 	reg |= 0x0f;
 	snd_soc_write(codec, VT1603_R8e, reg);
 
-	if (vt1603_conf.record_src != WMT_SND_DMIC_IN) {
-		#ifdef LEFT_MICIN_CAPTURE
-		// right ADC outputs left interface data
-		reg = snd_soc_read(codec, VT1603_R03);
-		reg &= ~BIT2;
-		snd_soc_write(codec, VT1603_R03, reg);
-		#endif
+	/* ADC_L/ADC_R data source select */
+	reg = snd_soc_read(codec, VT1603_R03);
+	if ((vt1603_conf.headmic_det) || (vt1603_conf.record_src == WMT_SND_LINEIN_2)
+		|| (vt1603_conf.record_src == WMT_SND_MICIN_2)) {
+		// Right ADC outputs left/right interface data
+		reg |= (BIT2 | BIT3);
+	}
+	else if ((vt1603_conf.record_src == WMT_SND_LINEIN_12) || 
+		(vt1603_conf.record_src == WMT_SND_MICIN_12)) {
+		// Left ADC outputs left interface data
+		// Right ADC outputs right interface data
+		reg = BIT2;
 	}
 	else {
-		//add for DMIC support.	
-		reg = 0x0C;//R03[7..4] will be set according to different sample rate. 
-		snd_soc_write(codec, VT1603_R03, reg);
+		// Left ADC outputs left/right interface data
+		reg &= ~(BIT2 | BIT3);
 	}
+	snd_soc_write(codec, VT1603_R03, reg);
 
 	// set PGA
 	reg = snd_soc_read(codec, VT1603_R66);
@@ -812,9 +881,16 @@ static int vt1603_set_default_volume(struct snd_soc_codec *codec)
 	snd_soc_write(codec,VT1603_R6b, 0x3b);
 
 	// set class-d AC boost gain=1.6
-	snd_soc_write(codec, VT1603_R97, 0x1c);
 	reg = snd_soc_read(codec, VT1603_R97);
-	reg = (reg & (~0x07)) + 0x04;
+	
+	if (vt1603_conf.classD_gain == 0xFF) {
+		reg += 0x04;
+	}
+	else {
+		reg += vt1603_conf.classD_gain;
+	}
+	
+	//info("VT1603_R97=0x%x",	reg);
 	snd_soc_write(codec, VT1603_R97, reg);
 
 	return 0;
@@ -925,9 +1001,26 @@ static unsigned int vt1603_irq_flag_detect(struct snd_soc_codec *codec)
 
 static void vt1603_switch_to_hp(struct snd_soc_codec *codec)
 {	
+	u16 reg;
+	
 	DBG_DETAIL();
 	
 	vt1603_classd_power_off(codec);
+
+	if ((vt1603_conf.headmic_det) && (!(GPIO_ID_GPIO_27_20_2BYTE_VAL & BIT6))) {
+		info("Headset Mic (4Rings)");
+
+		// select input from Micin-L
+		reg = snd_soc_read(codec, VT1603_R03);
+		reg &= ~(BIT2 | BIT3);
+		snd_soc_write(codec, VT1603_R03, reg);
+
+		// Linein-LR and Micin-R disable, Micin-L enable
+		reg = snd_soc_read(codec, VT1603_R8e);
+		reg &= ~(BIT7 + BIT6 + BIT4);
+		reg |= BIT5;
+		snd_soc_write(codec, VT1603_R8e, reg);
+	}
 	
 	if (codec->card->rtd->codec_dai->playback_active == 1)
 		vt1603_hp_power_up(codec);
@@ -935,9 +1028,25 @@ static void vt1603_switch_to_hp(struct snd_soc_codec *codec)
 
 static void vt1603_switch_to_classd(struct snd_soc_codec *codec)
 {	
+	u16 reg;
+	
 	DBG_DETAIL();
 	
 	vt1603_hp_power_off(codec);
+
+	if (vt1603_conf.headmic_det) {
+		//info("HP Plug-Out");
+		// select input from Micin-R
+		reg = snd_soc_read(codec, VT1603_R03);
+		reg |= (BIT2 | BIT3);
+		snd_soc_write(codec, VT1603_R03, reg);
+
+		// Linein-LR and Micin-L disable, Micin-R enable
+		reg = snd_soc_read(codec, VT1603_R8e);
+		reg &= ~(BIT7 + BIT6 + BIT5);
+		reg |= BIT4;
+		snd_soc_write(codec, VT1603_R8e, reg);
+	}	
 	
 	if (codec->card->rtd->codec_dai->playback_active == 1)
 		vt1603_classd_power_up(codec);
@@ -1423,9 +1532,25 @@ static int vt1603_hw_mute(struct snd_soc_codec *codec, int mute)
 static void vt1603_do_hw_mute_work(struct work_struct *work )
 {
 	struct snd_soc_codec *codec = vt1603_soc_codec;
+	u16 reg;
 
 	DBG_DETAIL();
 	vt1603_hw_mute(codec, hw_mute_flag);
+
+	if (vt1603_conf.in_record) {
+		if (vt1603_conf.trigger_stat == SNDRV_PCM_TRIGGER_START) {
+			reg = snd_soc_read(codec, VT1603_R63);
+			reg |= (BIT6 | BIT7);
+			snd_soc_write(codec, VT1603_R63, reg);
+		}
+		else if (vt1603_conf.trigger_stat == SNDRV_PCM_TRIGGER_STOP) {
+			reg = snd_soc_read(codec, VT1603_R63);
+			reg &= ~(BIT6 | BIT7);
+			snd_soc_write(codec, VT1603_R63, reg);
+
+			vt1603_conf.in_record = 0;
+		}
+	}
 }
 
 /*
@@ -1436,10 +1561,6 @@ static void vt1603_do_hw_mute_work(struct work_struct *work )
 static int vt1603_trigger(struct snd_pcm_substream *substream, 
 		int cmd, struct snd_soc_dai *codec_dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
-	u16 reg;
-	
 	DBG_DETAIL();
 	
 	switch (cmd) {
@@ -1450,9 +1571,8 @@ static int vt1603_trigger(struct snd_pcm_substream *substream,
 			hw_mute_flag = 0;
 		}
 		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
-			reg = snd_soc_read(codec, VT1603_R63);
-			reg |= (BIT6 | BIT7);
-			snd_soc_write(codec, VT1603_R63, reg);
+			vt1603_conf.in_record = 1;
+			vt1603_conf.trigger_stat = SNDRV_PCM_TRIGGER_START;
 		}
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
@@ -1462,9 +1582,7 @@ static int vt1603_trigger(struct snd_pcm_substream *substream,
 			hw_mute_flag = 1;
 		}
 		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
-			reg = snd_soc_read(codec, VT1603_R63);
-			reg &= ~(BIT6 | BIT7);
-			snd_soc_write(codec, VT1603_R63, reg);
+			vt1603_conf.trigger_stat = SNDRV_PCM_TRIGGER_STOP;
 		}
 		break;
 	}
@@ -1617,7 +1735,7 @@ static int vt1603_suspend_prepare(struct snd_soc_codec *codec)
 	// micboost power down, PGA power down
 	vt1603_write(codec, VT1603_R67,0x02);
 
-	mdelay(30);
+	//mdelay(30);
 	
 	return 0;
 }
@@ -1663,6 +1781,16 @@ static int vt1603_init(struct snd_soc_codec *codec)
 	int ret = 0;
 
 	DBG_DETAIL();
+
+	vt1603_conf.codec = codec;
+	vt1603_conf.in_record = 0;
+
+	if (vt1603_conf.headmic_det) {
+		GPIO_PULL_CTRL_GPIO_23_20_BYTE_VAL |= BIT6; //GPIO22 enable PU
+		GPIO_PULL_EN_GPIO_23_20_BYTE_VAL |= BIT3; //GPIO22 enable PU/PD
+		GPIO_OC_GPIO_27_20_2BYTE_VAL &= ~BIT6; //set GPIO22 to GPIO input enable
+		GPIO_CTRL_GPIO_23_20_BYTE_VAL |= BIT6; //enable GPIO22 to gpio mode
+	}
 	
 	INIT_WORK(&vt1603_timer_work, vt1603_do_timer_work);
 	INIT_WORK(&vt1603_hw_mute_work, vt1603_do_hw_mute_work);
@@ -1939,7 +2067,8 @@ static int vt1603_configure(void)
 	unsigned int bustype = 0;
 	unsigned int recordsrc = 0;
 	char codec_name[6];
-	char *recsrc_name[3] = {"LINE-IN", "AMIC-IN", "DMIC-IN"}; 
+	char *recsrc_name[7] = {"LINEIN_1", "MICIN_1", "DMIC_IN",
+							"LINEIN_12", "LINEIN_2", "MICIN_2", "MICIN_12"}; 
 
 	ret = wmt_getsyspara("wmt.audio.i2s", buf, &varlen);
 	if (ret == 0) {
@@ -1967,7 +2096,8 @@ static int vt1603_configure(void)
 			info("[hpdetect] invalid. set hp_plugin_level->low");
 			vt1603_conf.hp_plugin_level = 0;
 		}
-	
+
+		/* channel select */
 		if (channels == 0xf1) {
 			/* mono */
 			vt1603_conf.stereo_or_mono = 1;
@@ -1980,7 +2110,8 @@ static int vt1603_configure(void)
 			info("[mono/stereo] invalid. set channels->stereo");
 			vt1603_conf.stereo_or_mono = 0;
 		}
-		
+
+		/* bus type select */
 		if (bustype == 0xf0) {
 			vt1603_conf.bus_type = WMT_SND_I2C_BUS;
 			vt1603_conf.bus_id = 0;
@@ -2009,22 +2140,33 @@ static int vt1603_configure(void)
 		else {
 			info("Bus_type=I2C-Bus, Bus_id=%d", vt1603_conf.bus_id);
 		}
-		
+
+		/* record source select */
 		if (recordsrc == 0xf0) {
-			/* record via linein */
-			vt1603_conf.record_src = WMT_SND_LINE_IN;
+			vt1603_conf.record_src = WMT_SND_LINEIN_1;
 		} 
 		else if (recordsrc == 0xf1) {
-			/* record via analog mic */
-			vt1603_conf.record_src = WMT_SND_AMIC_IN;
+			vt1603_conf.record_src = WMT_SND_MICIN_1;
 		}
 		else if ((recordsrc == 0xf2) && (vt1603_conf.bus_type == WMT_SND_I2C_BUS)) {
 			/* record via digital mic */
 			vt1603_conf.record_src = WMT_SND_DMIC_IN;
 		}
+		else if (recordsrc == 0xf3) {
+			vt1603_conf.record_src = WMT_SND_LINEIN_12;
+		}
+		else if (recordsrc == 0xf4) {
+			vt1603_conf.record_src = WMT_SND_LINEIN_2;
+		}
+		else if (recordsrc == 0xf5) {
+			vt1603_conf.record_src = WMT_SND_MICIN_2;
+		}
+		else if (recordsrc == 0xf6) {
+			vt1603_conf.record_src = WMT_SND_MICIN_12;
+		}
 		else {
-			info("[record source] invalid. set to analog-mic");
-			vt1603_conf.record_src = WMT_SND_AMIC_IN;
+			info("[record source] invalid. set to MICIN_1");
+			vt1603_conf.record_src = WMT_SND_MICIN_1;
 		}
 
 		info("Record_src=%s", recsrc_name[vt1603_conf.record_src]);
@@ -2036,7 +2178,7 @@ static int vt1603_configure(void)
 		vt1603_conf.stereo_or_mono = 0;
 		vt1603_conf.bus_type = WMT_SND_SPI_BUS;
 		vt1603_conf.bus_id = 0;
-		vt1603_conf.record_src = WMT_SND_AMIC_IN;
+		vt1603_conf.record_src = WMT_SND_MICIN_1;
 	}
 	
 	if (vt1603_conf.volume_percent > 100)
@@ -2063,6 +2205,26 @@ static int vt1603_configure(void)
 		if (fm34_i2c_bus != 0)
 			fm34_i2c_bus = 1;
 	}
+
+	// get customization parameter
+	memset(buf, 0x0, sizeof(buf));
+	varlen = sizeof(buf);
+	ret = wmt_getsyspara("wmt.audio.custm", buf, &varlen);
+	if (ret == 0) {
+		sscanf(buf, "%d:%d", (int *)&vt1603_conf.headmic_det,
+			(int *)&vt1603_conf.classD_gain);
+		if (vt1603_conf.headmic_det != 0)
+			vt1603_conf.headmic_det = 1;
+		if ((vt1603_conf.classD_gain < 0) || (vt1603_conf.classD_gain > 7))
+			vt1603_conf.classD_gain = 0xFF;
+	}
+	else {
+		vt1603_conf.headmic_det = 0;
+		vt1603_conf.classD_gain = 0xFF;
+	}
+
+	/*info("headmic_det=%d, classD_gain=%d",
+		vt1603_conf.headmic_det, vt1603_conf.classD_gain);*/
 
 	return 0;
 }

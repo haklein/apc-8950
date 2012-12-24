@@ -48,6 +48,7 @@
 #endif
 
 #include <asm/hardware/cache-l2x0.h>
+#include <mach/wmt_env.h>
 
 extern void enable_user_access(void);
 static unsigned int wmt_plla_divisor = 1;
@@ -56,6 +57,7 @@ static unsigned int enter_wfi_flag = 0;
 
 /* TODO*/
 #define PMHC_HIBERNATE 0x205
+#define WM3481_A2_ID 0x34810103
 
 extern void wmt_power_up_debounce_value(void);
 static void wmt_power_off(void)
@@ -106,6 +108,7 @@ static struct resource wmt_uart1_resources[] = {
 	},
 };
 
+#ifdef CONFIG_UART_2_3_ENABLE
 static struct resource wmt_uart2_resources[] = {
 	[0] = {
 		.start  = UART2_BASE_ADDR,
@@ -121,6 +124,7 @@ static struct resource wmt_uart3_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 };
+#endif
 
 static struct platform_device wmt_uart0_device = {
 	.name           = "uart",
@@ -136,6 +140,7 @@ static struct platform_device wmt_uart1_device = {
 	.resource       = wmt_uart1_resources,
 };
 
+#ifdef CONFIG_UART_2_3_ENABLE
 static struct platform_device wmt_uart2_device = {
 	.name           = "uart",
 	.id             = 2,
@@ -149,6 +154,7 @@ static struct platform_device wmt_uart3_device = {
 	.num_resources  = ARRAY_SIZE(wmt_uart3_resources),
 	.resource       = wmt_uart3_resources,
 };
+#endif
 
 static struct resource wmt_sf_resources[] = {
 	[0] = {
@@ -383,8 +389,10 @@ extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
 static struct platform_device *wmt_devices[] __initdata = {
 	&wmt_uart0_device,
 	&wmt_uart1_device,
+#ifdef CONFIG_UART_2_3_ENABLE
 	&wmt_uart2_device,
 	&wmt_uart3_device,
+#endif
 	&wmt_sf_device,
 #ifdef CONFIG_MTD_WMT_NOR
 	&wmt_nor_device,
@@ -439,6 +447,8 @@ static int __init wmt_init(void)
 	unsigned char buf1[40];
 	int varlen=40;
 	unsigned int pmu_param;
+	unsigned int chip_id = 0;
+	unsigned int bondingid = 0;
 /* Add End */
 
 #ifdef CONFIG_CACHE_L2X0
@@ -447,6 +457,9 @@ static int __init wmt_init(void)
 	unsigned int onoff = 0;
 	unsigned int aux = 0x3E440000;
 	unsigned int prefetch_ctrl = 0x70000007;
+	unsigned int en_static_address_filtering = 0;
+	unsigned int address_filtering_start = 0xD8000000;
+	unsigned int address_filtering_end = 0xD9000000;
 #endif
 
 	pm_power_off = wmt_power_off;
@@ -459,25 +472,42 @@ static int __init wmt_init(void)
 	spi_register_board_info(wmt_spi1_board_info, ARRAY_SIZE(wmt_spi1_board_info));
 #endif
 
-	if (wmt_getsyspara("wmt.pllb.param", buf1, &varlen) == 0) {
-		sscanf(buf1, "%x:%x", &wmt_plla_divisor, &wmt_pllb_divisor);
-		if ((wmt_plla_divisor & 0x1) && (wmt_plla_divisor & 0x10))
-			enter_wfi_flag = 1;
-		wmt_plla_divisor &= 0xF00;
-		wmt_plla_divisor >>= 8;
+	wmt_getsocinfo(&chip_id, &bondingid);
+	printk("SCC ID = %x\n", chip_id);
+	if (chip_id < WM3481_A2_ID) { 
+		if (wmt_getsyspara("wmt.pllb.param", buf1, &varlen) == 0) {
+			sscanf(buf1, "%x:%x", &wmt_plla_divisor, &wmt_pllb_divisor);
+			if ((wmt_plla_divisor & 0x1) && (wmt_plla_divisor & 0x10))
+				enter_wfi_flag = 1;
+			wmt_plla_divisor &= 0xF00;
+			wmt_plla_divisor >>= 8;
+		}
+	} else {
+		if (wmt_getsyspara("wmt.pllb2.param", buf1, &varlen) == 0) {
+			sscanf(buf1, "%x:%x", &wmt_plla_divisor, &wmt_pllb_divisor);
+			if ((wmt_plla_divisor & 0x1) && (wmt_plla_divisor & 0x10))
+				enter_wfi_flag = 1;
+			wmt_plla_divisor &= 0xF00;
+			wmt_plla_divisor >>= 8;
+		}
 	}
 	printk("wmt.plla.divisor = 0x%x\n", wmt_plla_divisor);
 	printk("wmt.pllb.divisor = 0x%x\n", wmt_pllb_divisor);
 
 #ifdef CONFIG_CACHE_L2X0
 	if(wmt_getsyspara("wmt.l2c.param",buf,&varlen) == 0)
-		sscanf(buf,"%d:%x:%x",&onoff, &aux, &prefetch_ctrl );
+		sscanf(buf,"%d:%x:%x:%d:%x:%x",&onoff, &aux, &prefetch_ctrl, &en_static_address_filtering, &address_filtering_start, &address_filtering_end);
 
 	if( onoff == 1 )
 	{
 		l2x0_base = ioremap(0xD9000000, SZ_4K);
 
-
+		if( en_static_address_filtering == 1 )
+		{
+			writel_relaxed(address_filtering_end, l2x0_base + 0xC04);
+			writel_relaxed((address_filtering_start | 0x01), l2x0_base + 0xC00);
+		}
+		
 		writel_relaxed(0x110, l2x0_base + L2X0_TAG_LATENCY_CTRL);
 		writel_relaxed(0x110, l2x0_base + L2X0_DATA_LATENCY_CTRL);
 

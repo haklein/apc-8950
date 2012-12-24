@@ -182,6 +182,8 @@ static int wmt_hwdep_ioctl(struct snd_hwdep *hw, struct file *file, unsigned int
 {
 	int *value;
 	WFDStrmInfo_t *info;
+	struct wmt_soc_vt1603_info vt1603_info;
+	int ret = 0;
 	
 	switch (cmd) {
 	case WMT_SOC_IOCTL_HDMI:
@@ -204,6 +206,20 @@ static int wmt_hwdep_ioctl(struct snd_hwdep *hw, struct file *file, unsigned int
 	case WMT_SOC_IOCTL_WFD_STOP:
 		wmt_pcm_wfd_stop();
 		return 0;
+	case WMT_SOC_IOCTL_VT1603_RD:
+		ret = copy_from_user(&vt1603_info, (void __user *)arg, sizeof(vt1603_info));
+		
+        if (ret == 0) {
+			vt1603_info.reg_value = vt1603_hwdep_ioctl(0, vt1603_info.reg_offset, vt1603_info.reg_value);
+            ret = copy_to_user((void __user *)arg, &vt1603_info, sizeof(vt1603_info));
+        }
+		return ret;
+	case WMT_SOC_IOCTL_VT1603_WR:
+		ret = copy_from_user(&vt1603_info, (void __user *)arg, sizeof(vt1603_info));
+
+		if (ret == 0)
+			vt1603_hwdep_ioctl(1, vt1603_info.reg_offset, vt1603_info.reg_value);
+		return ret;
 	}
 	
 	err("Not supported ioctl for WMT-HWDEP");

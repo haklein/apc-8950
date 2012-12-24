@@ -261,8 +261,10 @@ static int ehci_bus_suspend (struct usb_hcd *hcd)
 		if (t1 & PORT_OWNER)
 			set_bit(port, &ehci->owned_ports);
 		else if ((t1 & PORT_PE) && !(t1 & PORT_SUSPEND)) {
-			//t2 |= PORT_SUSPEND;
-			t2 &= ~PORT_PE;// CharlesTu, disable port
+			if (uhcd_sus)
+				t2 |= PORT_SUSPEND;
+			else
+				t2 &= ~PORT_PE;// CharlesTu, disable port
 			set_bit(port, &ehci->bus_suspended);
 		}
 

@@ -195,6 +195,7 @@ typedef enum {
 	VPP_VOUT_DVO2HDMI = 5,
 	VPP_VOUT_LVDS = 6,
 	VPP_VOUT_VGA = 7,
+	VPP_VOUT_FBDEV = 8,
 	VPP_VOUT_MAX
 } vpp_vout_t;
 
@@ -408,6 +409,19 @@ typedef struct {
 	vdo_framebuf_t dst_fb;
 } vpp_scale_t;
 
+typedef enum {
+	VPP_SCALE_TYPE_NORMAL,	// src --> dst (SCL444)
+	VPP_SCALE_TYPE_OVERLAP,	// src + dst --> dst (VPU+GE direct path)
+	VPP_SCALE_TYPE_MAX
+} vpp_scale_type_t;
+
+typedef struct {
+	int mode;	
+	vdo_framebuf_t src_fb;
+	vdo_framebuf_t src2_fb;
+	vdo_framebuf_t dst_fb;
+} vpp_scale_overlap_t;
+
 #define VPP_VOUT_STS_REGISTER	0x01
 #define VPP_VOUT_STS_ACTIVE		0x02
 #define VPP_VOUT_STS_PLUGIN		0x04
@@ -437,7 +451,8 @@ typedef struct {
 	HDMI		4		colfmt						b0(0:12bit,1:24bit),b1(1:interlace),b8(1:blank)
 	DVO2HDMI	5		colfmt						b0(0:12bit,1:24bit),b1(1:interlace),b8(1:blank)
 	LVDS		6		lcd id						bit per pixel(bit0-7),b8(1:blank),b9-11(igs mode),bit12-13(swap)
-	VGA			7		
+	VGA			7
+	FBDEV		8
 	=============================================================================
 	tvsys : 0-NTSC,3-PAL,8-720p,9-1080i,10-1080p
 	tvconn: 0-YCbCr,1-SCART,2-YPbPr,3-VGA,4-SVideo,5-CVBS
@@ -599,6 +614,17 @@ typedef enum {
 	VPP_VPATH_MAX
 } vpp_video_path_t;
 
+typedef struct {
+	int fb_idx;
+	int xoffset;
+	int yoffset;
+} vpp_vout_overscan_offset_t;
+
+typedef struct {
+	vpp_deinterlace_t mode;
+	int level;
+} vpp_deinterlace_parm_t;
+
 #define VPPIO_MAGIC		'f'
 
 /* VPP common ioctl command */
@@ -641,6 +667,8 @@ typedef enum {
 #define VPPIO_VOGET_CP_INFO			_IOR(VPPIO_MAGIC,VPPIO_VOUT_BASE+9,vpp_vout_cp_info_t)
 #define VPPIO_VOSET_CP_KEY			_IOW(VPPIO_MAGIC,VPPIO_VOUT_BASE+10,vpp_vout_cp_key_t)
 #define VPPIO_VOSET_AUDIO_PASSTHRU	_IO(VPPIO_MAGIC,VPPIO_VOUT_BASE+11)
+#define VPPIO_VOSET_OVERSCAN_OFFSET _IOW(VPPIO_MAGIC,VPPIO_VOUT_BASE+12,vpp_vout_overscan_offset_t)
+#define VPPIO_VOSET_VIRTUAL_FBDEV	_IO(VPPIO_MAGIC,VPPIO_VOUT_BASE+13)
 
 /* GOVR ioctl command */
 #define VPPIO_GOVR_BASE				0x20
@@ -666,6 +694,7 @@ typedef enum {
 #define VPPIO_VPUGET_VIEW			_IOR(VPPIO_MAGIC,VPPIO_VPU_BASE+0,vdo_view_t)
 #define VPPIO_VPUSET_FBDISP			_IOW(VPPIO_MAGIC,VPPIO_VPU_BASE+1,vpp_dispfb_t)
 #define VPPIO_VPU_CLR_FBDISP		_IO(VPPIO_MAGIC,VPPIO_VPU_BASE+2)
+#define VPPIO_VPUSET_DEIMODE		_IOW(VPPIO_MAGIC,VPPIO_VPU_BASE+3,vpp_deinterlace_parm_t)
 
 /* SCL ioctl command */
 #define VPPIO_SCL_BASE				0x60
@@ -673,6 +702,9 @@ typedef enum {
 #define VPPIO_SCL_DROP_LINE_ENABLE  _IO(VPPIO_MAGIC,VPPIO_SCL_BASE+1)
 #define VPPIO_SCL_SCALE_ASYNC		_IOWR(VPPIO_MAGIC,VPPIO_SCL_BASE+2,vpp_scale_t)
 #define VPPIO_SCL_SCALE_FINISH		_IO(VPPIO_MAGIC,VPPIO_SCL_BASE+3)
+#define VPPIO_SCL_SCALE_TYPE		_IO(VPPIO_MAGIC,VPPIO_SCL_BASE+4)
+#define VPPIO_SCL_SCALE_OVERLAP		_IOWR(VPPIO_MAGIC,VPPIO_SCL_BASE+5,vpp_scale_overlap_t)
+#define VPPIO_SCL_SCALE_VPU			_IOWR(VPPIO_MAGIC,VPPIO_SCL_BASE+6,vpp_scale_t)
 
 #define VPPIO_MAX					0x70
 #endif //COM_VPP_H

@@ -78,6 +78,7 @@ static unsigned int speed_mode = 0;
 static unsigned int is_master = 1;/*master:1, slave:0*/
 unsigned int wmt_i2c2_is_master = 1;
 unsigned int wmt_i2c2_speed_mode = 0;
+static unsigned int wmt_i2c2_power_state = 0;/*0:power on, 1:suspend, 2:shutdown*/
 EXPORT_SYMBOL(wmt_i2c2_is_master);
 
 /**/
@@ -144,6 +145,10 @@ static int i2c_send_request(
 
 	if (slave_addr == WMT_I2C_API_I2C_ADDR)
 		return ret ;
+	if (wmt_i2c2_power_state == 2) {
+		printk("I2C2 has been shutdown\n");
+		return -EIO;
+	}
 
 	i2c.isr_nack    	= 0 ;
 	i2c.isr_byte_end	= 0 ;
@@ -1022,6 +1027,19 @@ static struct i2c_adapter i2c_wmt_ops = {
 
 #ifdef CONFIG_PM
 static struct i2c_regs_s wmt_i2c_reg ;
+static void i2c_shutdown(void)
+{
+	printk("i2c2 shutdown\n");
+	wmt_i2c2_power_state = 2;
+	while (!list_empty(&wmt_i2c_fifohead))
+		msleep(1);
+	while (1) {/*wait busy clear*/
+		if ((REG16_VAL(I2C2_CSR_ADDR) & I2C_STATUS_MASK) == I2C_READY)
+			break ;
+		msleep(1);
+	}
+	return;
+}
 static int i2c_suspend(void)
 {
 	printk("i2c2 suspennd\n");
@@ -1047,6 +1065,7 @@ static void i2c_resume(void)
 #else
 #define i2c_suspend NULL
 #define i2c_resume  NULL
+#define i2c_shutdown  NULL
 #endif
 extern int wmt_i2c_add_bus(struct i2c_adapter *);
 extern int wmt_i2c_del_bus(struct i2c_adapter *);
@@ -1054,6 +1073,7 @@ extern int wmt_i2c_del_bus(struct i2c_adapter *);
 static struct syscore_ops wmt_i2c_syscore_ops = {
 	.suspend	= i2c_suspend,
 	.resume		= i2c_resume,
+	.shutdown	= i2c_shutdown,
 };
 
 static int __init i2c_adap_wmt_init(void)

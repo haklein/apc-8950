@@ -27,6 +27,7 @@
 
 /*-------------------------------------------------------------------------*/
 
+extern unsigned char uhcd_sus;
 /* called after powerup, by probe or system-pm "wakeup" */
 static int ehci_pci_reinit(struct ehci_hcd *ehci, struct pci_dev *pdev)
 {
@@ -326,7 +327,7 @@ static int ehci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 	unsigned long		flags;
 	int			rc = 0;
-	//u16 pmc_enable = 0;
+	u16 pmc_enable = 0;
 	if (time_before(jiffies, ehci->next_statechange))
 		msleep(10);
 
@@ -345,11 +346,11 @@ static int ehci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 	// could save FLADJ in case of Vaux power loss
 	// ... we'd only use it to handle clock skew
       //CharlesTu,for PM high memory
-  /*    
-	pci_read_config_word(to_pci_dev(hcd->self.controller), 0x84, &pmc_enable);
-	pmc_enable |= 0x103;
-	pci_write_config_word(to_pci_dev(hcd->self.controller), 0x84, pmc_enable);
-  */
+  if (uhcd_sus) {
+		pci_read_config_word(to_pci_dev(hcd->self.controller), 0x84, &pmc_enable);
+		pmc_enable |= 0x103;
+		pci_write_config_word(to_pci_dev(hcd->self.controller), 0x84, pmc_enable);
+	}
 	return rc;
 }
 
@@ -394,13 +395,13 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	 * a '1' to the port switchover registers should have no effect if the
 	 * port was already switched over.
 	 */
-	//u16 pmc_enable = 0;
+	 u16 pmc_enable = 0;
  	//CharlesTu,for PM high memory
- 	/*
-	pci_read_config_word(pdev, 0x84, &pmc_enable);
-	pmc_enable &= ~0x03;
-	pci_write_config_word(pdev, 0x84, pmc_enable);
-   */
+ 	if (uhcd_sus) {
+		pci_read_config_word(pdev, 0x84, &pmc_enable);
+		pmc_enable &= ~0x03;
+		pci_write_config_word(pdev, 0x84, pmc_enable);
+	}
 	if (usb_is_intel_switchable_ehci(pdev))
 		ehci_enable_xhci_companion();
 
@@ -414,6 +415,7 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	/*CharlesTu,2011.01,21,move ahead,due to vbus lost when suspend
 	* when resume ehci hub activate ,type= HUB_RESET_RESUME
 	*/
+	if (!uhcd_sus)
  	 usb_root_hub_lost_power(hcd->self.root_hub);
 	/* If CF is still set and we aren't resuming from hibernation
 	 * then we maintained PCI Vaux power.
@@ -431,7 +433,8 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 		return 0;
 	}
 	/*CharlesTu,2011.01,21,move ahead,due to vbus lost when suspend*/
-	//usb_root_hub_lost_power(hcd->self.root_hub);
+	if (uhcd_sus)
+		usb_root_hub_lost_power(hcd->self.root_hub);
 
 	/* Else reset, to cope with power loss or flush-to-storage
 	 * style "resume" having let BIOS kick in during reboot.

@@ -26,6 +26,8 @@
 #ifndef VPU_H
 #define VPU_H
 
+#define VPU_MV_BUF_LEN	16
+
 typedef struct {
 	VPP_MOD_BASE;
 
@@ -46,7 +48,9 @@ typedef struct {
 	
 	vpp_deinterlace_t dei_mode;
 	vpp_scale_mode_t scale_mode;
+	vpp_scale_mode_t scale_sync;
 	unsigned int underrun_cnt;		// if vpu scale underrun happen will dec 1, this counter to 0 will disable vpu fb update
+	vdo_framebuf_t scl_fb;
 } vpu_mod_t;
 
 #ifdef __cplusplus
@@ -89,6 +93,8 @@ EXTERN void vpu_w_set_alpha(int enable,unsigned int data);
 EXTERN void vpu_dei_set_mode(vpp_deinterlace_t mode);
 EXTERN void vpu_dei_set_enable(vpp_flag_t enable);
 EXTERN void vpu_dei_get_sum(unsigned int *ysum,unsigned int *usum,unsigned int *vsum);
+EXTERN void vpu_dei_set_range(int level,int value);
+EXTERN void vpu_dei_set_param(vpp_deinterlace_t mode,int level);
 
 EXTERN void vpu_int_set_enable(vpp_flag_t enable, vpp_int_t int_bit);
 EXTERN vpp_int_err_t vpu_int_get_status(void);
@@ -101,6 +107,7 @@ EXTERN void vpu_mvr_set_width(unsigned int width,unsigned int fb_w);
 EXTERN void vpu_mvr_set_field_mode(vpp_flag_t enable);
 EXTERN void vpu_set_direct_path(vpp_video_path_t mode);
 EXTERN vpp_video_path_t vpu_get_direct_path(void);
+EXTERN void vpu_reg_dump(void);
 
 #endif				//WMT_FTBLK_VPU
 

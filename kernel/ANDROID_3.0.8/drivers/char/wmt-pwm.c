@@ -123,7 +123,7 @@ void pwm_get_env(void)
 	memset(&g_lcd_pw_pin, 0, sizeof(struct gpio_operation_t));
 	if( wmt_getsyspara(ENV_LCD_POWER,buf,&varlen) == 0) {
 		//printk(" pwm_get_env : %s = %s \n",ENV_LCD_POWER,buf);
-		sscanf(buf,"%d:%d:%x:%x:%x:%x",&g_lcd_pw_pin.id, &g_lcd_pw_pin.act, &g_lcd_pw_pin.bitmap, &g_lcd_pw_pin.ctl, \
+		sscanf(buf,"%x:%d:%x:%x:%x:%x",&g_lcd_pw_pin.id, &g_lcd_pw_pin.act, &g_lcd_pw_pin.bitmap, &g_lcd_pw_pin.ctl, \
 				&g_lcd_pw_pin.oc, &g_lcd_pw_pin.od);
 		if ((g_lcd_pw_pin.ctl&0xffff0000) == GPIO_PHY_BASE_ADDR)
 			g_lcd_pw_pin.ctl += WMT_MMAP_OFFSET;
@@ -188,10 +188,26 @@ unsigned int pwm_get_duty(int no)
 
 void set_lcd_power(int on)
 {
-	unsigned int val;
+	unsigned int val ,i;
 
 	if ((g_lcd_pw_pin.ctl == 0) || (g_lcd_pw_pin.oc == 0) || (g_lcd_pw_pin.od == 0)) {
 		printk("lcd power ping not define\n");
+		return;
+	}
+	if (g_lcd_pw_pin.id == 0x172) {
+		// LVDS power sequence
+		if (on) {
+			REG32_VAL(0xFE1100f0)  &= ~(0x400);
+			REG32_VAL(0xFE1100b0)  |= 0x400;
+			for(i=0;i<200;i++)
+				udelay(100);
+
+			REG32_VAL(0xFE1100c0)  |= 0x401;
+			REG32_VAL(0xFE110080)  |= 0x401;
+			for(i=0;i<200;i++)
+				udelay(100);
+			REG32_VAL(0xFE1100f0)  |= 0x400;
+		}
 		return;
 	}
 	val = 1<<g_lcd_pw_pin.bitmap;	

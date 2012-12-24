@@ -128,6 +128,7 @@ source "drivers/media/video/wmt/h263/Kconfig"
 source "drivers/media/video/wmt/h264/Kconfig"
 source "drivers/media/video/wmt/rv/Kconfig"
 source "drivers/media/video/wmt/vc1/Kconfig"
+source "drivers/media/video/wmt/vpx/Kconfig"
 source "drivers/media/video/wmt/jpeg/Kconfig"
 source "drivers/media/video/wmt/Kconfig"
 endmenu

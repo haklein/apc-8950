@@ -197,7 +197,7 @@ __setup("sf_mtd=", wmt_force_sf_size);
 struct wmt_flash_info_t g_sf_info[2];
 extern struct wm_sf_dev_t sf_ids[];
 
-int get_sf_info(struct wmt_flash_info_t *info)
+int get_sf_info(int index, struct wmt_flash_info_t *info)
 {
 	unsigned int i;
 
@@ -210,11 +210,16 @@ int get_sf_info(struct wmt_flash_info_t *info)
 		}
 	}
 	if (sf_ids[i].id == 0) {
-		printk(KERN_WARNING "un-know id = 0x%x\n", info->id);
-		/*info->id = FLASH_UNKNOW;*/
-		info->id = sf_ids[1].id;
-		info->total = (sf_ids[1].size*1024);
-		/*return -1;*/
+		printk(KERN_WARNING "un-know id%d = 0x%x\n", index, info->id);
+		if (index == 0 && info->id != 0) {
+			// if not identified, set size 512K as default.
+			info->id = sf_ids[2].id;
+			info->total = (sf_ids[2].size*1024);
+		} else {
+			info->id = FLASH_UNKNOW;	
+			info->total = 0;
+		}
+		return -1;
 	}
 
 	return 0;
@@ -238,6 +243,7 @@ int wmt_sfc_ccr(struct wmt_flash_info_t *info)
 int wmt_sfc_init(struct sfreg_t *sfc)
 {
 	unsigned int tmp;
+	int i, ret;
 
 	tmp = GPIO_STRAP_STATUS_VAL;
 	if ((tmp & 0x6) == SPI_FLASH_TYPE) {
@@ -265,11 +271,15 @@ int wmt_sfc_init(struct sfreg_t *sfc)
 	g_sf_info[1].id = sfc->SPI_MEM_1_SR_ACC;
 	sfc->SPI_RD_WR_CTR = 0x01;
 
-	for (tmp = 0; tmp < 2; tmp++)
-		get_sf_info(&g_sf_info[tmp]);
+	for (i = 0; i < 2; i++) {
+		ret = get_sf_info(i, &g_sf_info[i]);
+		if (ret)
+			break;
+	}
 	if (g_sf_info[0].id == FLASH_UNKNOW)
 		return -1;
 	g_sf_info[0].phy = (MTDSF_PHY_ADDR-g_sf_info[0].total+1);
+	MTDSF_PHY_ADDR = MTDSF_PHY_ADDR-g_sf_info[0].total+1;
 	if (g_sf_info[0].phy&0xFFFF) {
 		printk(KERN_ERR "WMT SFC Err : start address must align to 64KByte\n");
 		return -1;
@@ -278,6 +288,7 @@ int wmt_sfc_init(struct sfreg_t *sfc)
 	sfc->CHIP_SEL_0_CFG = g_sf_info[0].val;
 	if (g_sf_info[1].id != FLASH_UNKNOW) {
 		g_sf_info[1].phy = (g_sf_info[0].phy-g_sf_info[1].total);
+		MTDSF_PHY_ADDR = MTDSF_PHY_ADDR-g_sf_info[1].total;
 		tmp = g_sf_info[1].phy;
 		g_sf_info[1].phy &= ~(g_sf_info[1].total-1);
 		if (g_sf_info[0].phy&0xFFFF) {
@@ -291,12 +302,11 @@ int wmt_sfc_init(struct sfreg_t *sfc)
 	}
 	/*printk("CS0 : 0x%x ,  CS1 : 0x%x\n",g_sf_info[0].val,g_sf_info[1].val);*/
 	
-	if (g_sf_force_size)
+	if (g_sf_force_size) {
 		tmp = (g_sf_force_size*1024*1024);
-	else
-		tmp = MTDSF_TOTAL_SIZE;
+		MTDSF_PHY_ADDR = (0xFFFFFFFF-tmp)+1;
+	}
 
-	MTDSF_PHY_ADDR = MTDSF_PHY_ADDR-tmp+1;
 	return 0;
 }
 
@@ -715,36 +725,71 @@ void config_sf_reg(struct sfreg_t *sfreg)
 		sfreg->SPI_INTF_CFG   = 0x00030000;
 #endif
 }
+void shift_partition_content(int index)
+{
+	int i, j;
+	for ( i = index, j = 0; i < 6; i++, j++) {
+		boot_partitions[j].name = boot_partitions[i].name;
+		boot_partitions[j].offset = boot_partitions[i].offset;
+		boot_partitions[j].size = boot_partitions[i].size;
+	}
+}
 
 int mtdsf_init_device(struct mtd_info *mtd, unsigned long size, char *name)
 {
-		int nr_parts;
-		char *part_type = NULL;
+	int nr_parts, cut_parts = 0;
+	char *part_type = NULL;
 
-		mtd->name = name;
-		mtd->type = MTD_NORFLASH;
-		mtd->flags = MTD_CAP_NORFLASH;
-		mtd->size = size;
-		mtd->erasesize = MTDSF_ERASE_SIZE;
-		mtd->owner = THIS_MODULE;
-		mtd->erase = sf_erase;
-		mtd->read = sf_read;
-		mtd->write = sf_write;
-		mtd->writesize = 1;
+	mtd->name = name;
+	mtd->type = MTD_NORFLASH;
+	mtd->flags = MTD_CAP_NORFLASH;
+	mtd->size = size;
+	mtd->erasesize = MTDSF_ERASE_SIZE;
+	mtd->owner = THIS_MODULE;
+	mtd->erase = sf_erase;
+	mtd->read = sf_read;
+	mtd->write = sf_write;
+	mtd->writesize = 1;
 
-		nr_parts = parse_mtd_partitions(mtd, part_probes, &parts, 0);
-		if (nr_parts > 0)
-			part_type = "command line";
-		if (nr_parts <= 0) {
-			parts = boot_partitions;
-			nr_parts = NUM_SF_PARTITIONS;
-			part_type = "builtin";
+
+	boot_partitions[5].offset = size - boot_partitions[5].size;
+	boot_partitions[4].offset = boot_partitions[5].offset - boot_partitions[4].size;
+	boot_partitions[3].offset = boot_partitions[4].offset - boot_partitions[3].size;
+	boot_partitions[2].offset = boot_partitions[3].offset - boot_partitions[2].size;
+	if (boot_partitions[2].offset > 0x00280000) {
+		boot_partitions[1].offset = boot_partitions[2].offset - boot_partitions[1].size;
+		if (boot_partitions[1].offset > 0)
+			boot_partitions[0].size = boot_partitions[1].offset;
+		else {
+			shift_partition_content(1);
+			cut_parts = 1;
 		}
-		printk(KERN_INFO "SF Using %s partition table\n", part_type);
-		mtd_device_register(mtd, parts, nr_parts);
-		//add_mtd_partitions(mtd, boot_partitions, ARRAY_SIZE(boot_partitions));
+	} else if (boot_partitions[2].offset > 0) {
+		boot_partitions[1].size = boot_partitions[2].offset;
+		boot_partitions[1].offset = 0;
+		shift_partition_content(1);
+		cut_parts = 1;
+	} else {
+		shift_partition_content(2);
+		cut_parts = 2;
+	}
+	
 
-		return 0;
+	nr_parts = parse_mtd_partitions(mtd, part_probes, &parts, 0);
+	if (nr_parts > 0) {
+		part_type = "command line";
+		cut_parts = 0;
+	}
+	if (nr_parts <= 0) {
+		parts = boot_partitions;
+		nr_parts = NUM_SF_PARTITIONS;
+		part_type = "builtin";
+	}
+	printk(KERN_INFO "SF Using %s partition table count=%d\n", part_type, nr_parts - cut_parts);
+	mtd_device_register(mtd, parts, nr_parts - cut_parts);
+	//add_mtd_partitions(mtd, boot_partitions, ARRAY_SIZE(boot_partitions));
+
+	return 0;
 }
 
 /*static int wmt_sf_probe(struct device *dev)*/
@@ -789,10 +834,11 @@ static int wmt_sf_probe(struct platform_device *pdev)
 	if (g_sf_force_size)
 		sfsize = (g_sf_force_size*1024*1024);
 	else
-		sfsize = MTDSF_TOTAL_SIZE;
-
+		sfsize = (0xFFFFFFFF-MTDSF_PHY_ADDR)+1;//MTDSF_TOTAL_SIZE;
+	printk("MTDSF_PHY_ADDR = %08X, sfsize = %08X\n",MTDSF_PHY_ADDR,sfsize);
 	if (MTDSF_PHY_ADDR == 0xFFFFFFFF || MTDSF_PHY_ADDR == 0xEFFFFFFF) {
 		MTDSF_PHY_ADDR = MTDSF_PHY_ADDR-sfsize+1;
+		printk("MTDSF_PHY_ADDR = %08X, sfsize = %08X\n",MTDSF_PHY_ADDR,sfsize);
 	}
 	info->io_base = (unsigned char *)ioremap(MTDSF_PHY_ADDR, sfsize);
 	if (info->io_base == NULL) {

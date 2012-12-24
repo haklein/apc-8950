@@ -130,7 +130,11 @@ unsigned int uart_debug = 0;
 		#define CALLOUT_WMT_MAJOR    5       /* for callout device */
 #endif
 
-#define NR_PORTS             4       /* UART0 to UART3 */
+#ifdef CONFIG_UART_2_3_ENABLE
+#define NR_PORTS				4
+#else
+#define NR_PORTS				2
+#endif
 #define WMT_ISR_PASS_LIMIT   256
 
 struct wmt_port {
@@ -1387,8 +1391,10 @@ static void wmt_break_ctl(struct uart_port *port, int break_state)
 static char *wmt_uartname[] = {
 	"uart0",
 	"uart1",
+#ifdef CONFIG_UART_2_3_ENABLE
 	"uart2",
 	"uart3",
+#endif
 };
 
 #ifdef CONFIG_SERIAL_WMT_DUAL_DMA
@@ -1468,6 +1474,7 @@ static int wmt_startup(struct uart_port *port)
 #endif
 		break;
 
+#ifdef CONFIG_UART_2_3_ENABLE
 	case IRQ_UART2:
 		uartname = wmt_uartname[2];
 #ifdef CONFIG_SERIAL_WMT_DUAL_DMA
@@ -1488,6 +1495,7 @@ static int wmt_startup(struct uart_port *port)
 		sport->port.dma_tx_cfg	= dma_device_cfg_table[UART_3_TX_DMA_REQ];
 #endif
 		break;
+#endif
 
 	}
 #ifdef CONFIG_SERIAL_WMT_DUAL_DMA
@@ -1988,17 +1996,22 @@ static void wmt_init_ports(void)
 	
     /* Switch the Uart's pin from default GPIO into uart function pins for UART0 ~ UART3 */
 	GPIO_CTRL_GP22_UART_0_1_BYTE_VAL &= ~(BIT1|BIT3|BIT4|BIT5|BIT6|BIT7); /*UART0 UART1*/
+	#ifdef CONFIG_UART_2_3_ENABLE
 	GPIO_CTRL_GP23_UART_2_3_BYTE_VAL &= ~(BIT1|BIT3|BIT5|BIT7); /*UART2 UART3*/
+	#endif
 
-    /*Set Uart5 & Uart6 pin share*/
+    /*Set Uart0 and Uart1, Uart2 and Uart3  pin share*/
     GPIO_PIN_SHARING_SEL_4BYTE_VAL  |= BIT14;
+	#ifdef CONFIG_UART_2_3_ENABLE
     GPIO_PIN_SHARING_SEL_4BYTE_VAL  &= ~(BIT8|BIT9);
+    #endif
     
     auto_pll_divisor(DEV_UART0, CLK_ENABLE, 0, 0);
     auto_pll_divisor(DEV_UART1, CLK_ENABLE, 0, 0);
+	#ifdef CONFIG_UART_2_3_ENABLE
     auto_pll_divisor(DEV_UART2, CLK_ENABLE, 0, 0);
     auto_pll_divisor(DEV_UART3, CLK_ENABLE, 0, 0);
-	 
+	#endif 
 }
 
 void __init wmt_register_uart_fns(struct wmt_port_fns *fns)
@@ -2034,6 +2047,7 @@ void __init wmt_register_uart(int idx, int port)
 		wmt_ports[idx].port.flags   = ASYNC_BOOT_AUTOCONF;
 		break;
 
+#ifdef CONFIG_UART_2_3_ENABLE
 	case 2:
 		wmt_ports[idx].port.membase = (void *)(REG32_PTR(UART2_BASE_ADDR));
 		wmt_ports[idx].port.mapbase = UART2_BASE_ADDR;
@@ -2047,6 +2061,7 @@ void __init wmt_register_uart(int idx, int port)
 		wmt_ports[idx].port.irq     = IRQ_UART3;
 		wmt_ports[idx].port.flags   = ASYNC_BOOT_AUTOCONF;
 		break;
+#endif
 
 	default:
 		printk(KERN_ERR "%s: bad port number %d\n", __func__, port);
@@ -2299,6 +2314,7 @@ static int wmt_serial_suspend(struct platform_device *pdev, pm_message_t state)
         auto_pll_divisor(DEV_UART1, CLK_DISABLE, 0, 0);
         break;
 
+#ifdef CONFIG_UART_2_3_ENABLE
     case IRQ_UART2:
         auto_pll_divisor(DEV_UART2, CLK_DISABLE, 0, 0);
         break;
@@ -2306,6 +2322,7 @@ static int wmt_serial_suspend(struct platform_device *pdev, pm_message_t state)
     case IRQ_UART3:
         auto_pll_divisor(DEV_UART3, CLK_DISABLE, 0, 0);
         break;
+#endif
 
     }
 
@@ -2338,6 +2355,7 @@ static int wmt_serial_resume(struct platform_device *pdev)
         auto_pll_divisor(DEV_UART1, CLK_ENABLE, 0, 0);
         break;
 
+#ifdef CONFIG_UART_2_3_ENABLE
     case IRQ_UART2:
         auto_pll_divisor(DEV_UART2, CLK_ENABLE, 0, 0);
         break;
@@ -2345,6 +2363,7 @@ static int wmt_serial_resume(struct platform_device *pdev)
     case IRQ_UART3:
         auto_pll_divisor(DEV_UART3, CLK_ENABLE, 0, 0);
         break;
+#endif
 
     }
 

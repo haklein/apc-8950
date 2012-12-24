@@ -34,12 +34,14 @@
 #define RMCTL_WMT_1
 #define RMCTL_WMT_2
 #define RMCTL_TV_BOX
+#define RMCTL_IPTV_WHITE_REMOTE
+#define RMCTL_IPTV_BLACK_REMOTE
 
 
 EXTERN struct rmt_dev {
 	char *vendor_name;
 	int vender_id;
-	unsigned int key_codes[128];
+	unsigned int key_codes[256];
 };
 
 
@@ -166,19 +168,116 @@ EXTERN struct rmt_dev  rmt_dev_tbl[ ] = {
 			[0x53] = KEY_HOME,       /* home */
 			[0x11] = KEY_MENU,       /* menu */
 			[0x10] = KEY_BACK,       /* back */
-			[0x4b] = KEY_ZOOMOUT,    /* zoom out */
-			[0x08] = KEY_ZOOMIN,     /* zoom in */
+			//[0x4b] = KEY_ZOOMOUT,    /* zoom out */
+			//[0x08] = KEY_ZOOMIN,     /* zoom in */
+			[0x4b] = KEY_CHANNELDOWN,
+			[0x08] = KEY_CHANNELUP,
 			[0x0d] = KEY_UP,         /* up */
 			[0x4e] = KEY_LEFT,       /* left */
-			[0x19] = KEY_REPLY,      /* OK */
+			[0x19] = KEY_ENTER,      /* OK */
 			[0x0c] = KEY_RIGHT,      /* right */
 			[0x4f] = KEY_DOWN,       /* down */
 			[0x09] = KEY_PAGEUP,     /* page up */
-			[0x47] = KEY_REWIND,     /* rewind */
+			//[0x47] = KEY_REWIND,     /* rewind */
+			[0x47] = KEY_SPACE,
 			[0x05] = KEY_PAGEDOWN,   /* page down */
-			[0x04] = KEY_FASTFORWARD /* forward */
+			[0x04] = KEY_FASTFORWARD, /* forward */
+			// define key that doesn't exist to enable IPTV remote key
+			[0x00] = KEY_DELETE,
+			[0x01] = KEY_RED,
+			[0x02] = KEY_GREEN,
+			[0x03] = KEY_YELLOW,
+			[0x06] = KEY_BLUE
 		},
 	},
+	#endif
+	#ifdef RMCTL_IPTV_WHITE_REMOTE
+	{
+		.vendor_name = "IPTV_WHITE_REMOTE",
+		.vender_id = 0xb34c,
+		.key_codes = {
+			[0xc5] = KEY_BACK,
+			[0xce] = KEY_ENTER,
+			[0x82] = KEY_HOMEPAGE,
+			[0x99] = KEY_LEFT,
+			[0xca] = KEY_UP,
+			[0x8c] = KEY_PAGEDOWN,
+			[0xc1] = KEY_RIGHT,
+			[0xd2] = KEY_DOWN,
+			[0xdd] = KEY_PAGEUP,
+			[0x87] = KEY_0,
+			[0x92] = KEY_1,
+			[0x93] = KEY_2,
+			[0xcc] = KEY_3,
+			[0x8e] = KEY_4,
+			[0x8f] = KEY_5,
+			[0xc8] = KEY_6,
+			[0x8a] = KEY_7,
+			[0x8b] = KEY_8,
+			[0xc4] = KEY_9,
+			[0xdc] = KEY_POWER,
+			[0x85] = KEY_CHANNELUP,
+			[0x86] = KEY_CHANNELDOWN,
+			[0x80] = KEY_VOLUMEUP,
+			[0x81] = KEY_VOLUMEDOWN,
+			[0x9c] = KEY_MUTE,
+			[0x95] = KEY_PLAYPAUSE,
+			[0x88] = KEY_PROG1,
+			[0xcd] = KEY_RED,
+			[0x91] = KEY_GREEN,
+			[0x83] = KEY_YELLOW,
+			[0xc3] = KEY_BLUE,
+			[0xd6] = KEY_PROG2,
+			[0x8d] = KEY_SETUP,
+			[0x98] = KEY_SOUND,
+			[0xd0] = KEY_PROG4,
+			[0xda] = KEY_PROG3
+		},
+	},
+	#endif
+	#ifdef RMCTL_IPTV_BLACK_REMOTE
+	{
+		.vendor_name = "IPTV_BLACK_REMOTE",
+		.vender_id = 0xb24d,
+		.key_codes = {
+			[0xc5] = KEY_BACK,
+			[0xce] = KEY_ENTER,
+			[0x82] = KEY_HOMEPAGE,
+			[0x99] = KEY_LEFT,
+			[0xca] = KEY_UP,
+			[0x8c] = KEY_PAGEDOWN,
+			[0xc1] = KEY_RIGHT,
+			[0xd2] = KEY_DOWN,
+			[0xdd] = KEY_PAGEUP,
+			[0x87] = KEY_0,
+			[0x92] = KEY_1,
+			[0x93] = KEY_2,
+			[0xcc] = KEY_3,
+			[0x8e] = KEY_4,
+			[0x8f] = KEY_5,
+			[0xc8] = KEY_6,
+			[0x8a] = KEY_7,
+			[0x8b] = KEY_8,
+			[0xc4] = KEY_9,
+			[0xdc] = KEY_POWER,
+			[0x85] = KEY_CHANNELUP,
+			[0x86] = KEY_CHANNELDOWN,
+			[0x80] = KEY_VOLUMEUP,
+			[0x81] = KEY_VOLUMEDOWN,
+			[0x9c] = KEY_MUTE,
+			[0x95] = KEY_PLAYPAUSE,
+			[0x88] = KEY_PROG1,
+			[0xcd] = KEY_RED,
+			[0x91] = KEY_GREEN,
+			[0x83] = KEY_YELLOW,
+			[0xc3] = KEY_BLUE,
+			[0xd6] = KEY_PROG2,
+			[0x8d] = KEY_SETUP,
+			[0x98] = KEY_SOUND,
+			[0xd0] = KEY_PROG4,
+			[0xda] = KEY_PROG3
+		},
+	}
 	#endif
 };
 #undef EXTERN

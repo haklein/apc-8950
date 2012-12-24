@@ -29,6 +29,7 @@ WonderMedia Technologies, Inc.
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/proc_fs.h>
+#include <linux/cpufreq.h>
 
 #include <mach/hardware.h>
 #include <asm/memory.h>
@@ -47,7 +48,7 @@ WonderMedia Technologies, Inc.
 #define	SOFT_POWER_SUPPORT
 #define	RTC_WAKEUP_SUPPORT
 #ifdef CONFIG_RMTCTL_WonderMedia //define if CIR menuconfig enable
-     #define CIR_WAKEUP_SUPPORT
+#define CIR_WAKEUP_SUPPORT
 #endif
 #define KEYPAD_POWER_SUPPORT
 #define PMWT_C_WAKEUP(src, type)  ((type & PMWT_TYPEMASK) << (((src - 24) & PMWT_WAKEUPMASK) * 4))
@@ -59,20 +60,16 @@ enum wakeup_src_e {
 	WKS_SRC3        = 3,     /* General Purpose Wakeup Source 3          */
 	WKS_SRC4        = 4,     /* General Purpose Wakeup Source 4          */
 	WKS_SRC5        = 5,     /* General Purpose Wakeup Source 5          */
-	WKS_SRC6        = 6,     /* General Purpose Wakeup Source 6          */
-	WKS_SRC7        = 7,     /* General Purpose Wakeup Source 7          */
+	WKS_UDC2        = 6,     /* UDC interrupt as wakeup                  */	
 	WKS_RTC         = 15,    /* RTC alarm interrupt as wakeup            */
-	WKS_ETH         = 17,    /* ETH interrupt as wakeup                  */
 	WKS_UHC         = 20,    /* UHC interrupt as wakeup                  */
 	WKS_UDC         = 21,    /* UDC interrupt as wakeup                  */
 	WKS_CIR         = 22,    /* CIR interrupt as wakeup                  */
-	WKS_CF          = 26,    /* CF  interrupt as wakeup                  */
-	WKS_XD,                  /* XD  interrupt as wakeup                  */
-	WKS_MS,                  /* MS  interrupt as wakeup                  */
-	WKS_SD0,                 /* SD0 interrupt as wakeup                  */
-	WKS_SD1,                 /* SD1 interrupt as wakeup                  */
-	WKS_SC,                  /* SmartCard interrupt as wakeup            */
-	WKS_NUM                  /* Wakeup event number                      */
+	WKS_EBM         = 24,    /* EBM  interrupt as wakeup                  */
+	WKS_MDM         = 25,    /* MDM  interrupt as wakeup                  */	
+	WKS_SD2					= 27,    /* SD2 interrupt as wakeup                  */
+	WKS_SD3					= 28,    /* SD3 interrupt as wakeup                  */
+	WKS_SD0					= 29    /* SD0 interrupt as wakeup                  */
 };
 
 #define DRIVER_NAME	"PMC"
@@ -123,7 +120,7 @@ static unsigned int exec_at = (unsigned int)-1;
 
 /*from = 4 high memory*/
 static void (*theKernel)(int from);
-static void (*theKernel_io)(int from);
+//static void (*theKernel_io)(int from);
 
 #if defined(SOFT_POWER_SUPPORT) && defined(CONFIG_PROC_FS)
 //static struct proc_dir_entry *proc_softpower;
@@ -133,6 +130,7 @@ static unsigned int softpower_data;
 static long rtc2sys;
 
 struct work_struct	PMC_shutdown;
+struct work_struct	PMC_sync;
 
 
 extern int wmt_getsyspara(char *varname, char *varval, int *varlen);
@@ -143,6 +141,8 @@ static int power_up_debounce_value = 2000; /*power button debounce time when pre
 #define max_debounce_value 4000
 
 char hotplug_path[256] = "/sbin/hotplug";
+static int sync_counter = 0;
+static unsigned int time1, time2;
 
 #define REG_VAL(addr) (*((volatile unsigned int *)(addr)))
 
@@ -166,21 +166,51 @@ static unsigned int eth;
 #endif
 
 #ifdef CONFIG_BATTERY_WMT
-static bool battery_used;
+static unsigned int battery_used;
 #endif
 
 #ifdef CONFIG_CACHE_L2X0
 unsigned int l2x0_onoff;
 unsigned int l2x0_aux;
 unsigned int l2x0_prefetch_ctrl;
+unsigned int en_static_address_filtering = 0;
+unsigned int address_filtering_start = 0xD8000000;
+unsigned int address_filtering_end = 0xD9000000;
 #endif
 
 //gri
+static unsigned int var_fake_power_button=0;
+static unsigned int var_wake_type2=0;
 static unsigned int var_wake_type=0;
 static unsigned int var_wake_param=0;
 static unsigned int var_wake_en=0;
+static unsigned int var_1st_flag=0;
+//static unsigned int var_wake_en_param=0;
+//static unsigned int var_wake_dis_param=0;
+//static unsigned int var_en_wake_type2=0;
+//static unsigned int var_en_wake_type=0;
+//static unsigned int var_en_wake_type2_mask=0;
+//static unsigned int var_en_wake_type_mask=0;
 
-unsigned int WMT_WAKE_UP_EVENT;
+volatile unsigned int var_wakeup_sts=0;
+volatile unsigned int var_during_suspend=0;
+volatile unsigned int Wake_up_sts_mask = 0;
+static unsigned int in_disable_wakeup = 0;
+static	unsigned int wakeup_backup;
+
+struct wmt_wakeup_event_table {
+    void (*callback)(void *);
+    void *callback_data;
+};
+
+struct wmt_wakeup_event_table wmt_wakeup_event_tables[32];
+static unsigned int register_callback_1st_flag=0;
+
+
+static unsigned int pmlock_1st_flag=0;
+spinlock_t	wmt_pm_lock;
+
+unsigned int WMT_WAKE_UP_EVENT;//for printing wakeup event
 
 /* wmt_pwrbtn_debounce_value()
  *
@@ -192,7 +222,7 @@ static void wmt_pwrbtn_debounce_value(unsigned int time)
 	unsigned long pmpb_value = 0;
 
 	/*add a delay to wait pmc & rtc  sync*/
-	udelay(100);
+	udelay(130);
 	
 	/*Debounce value unit is 1024 * RTC period ,RTC is 32KHz so the unit is ~ 32ms*/
 	if (time % 32)
@@ -220,6 +250,18 @@ void wmt_power_up_debounce_value(void) {
 
 }
 
+static void run_sync(struct work_struct *work)
+{
+	int ret;
+  char *argv[] = { "/system/etc/wmt/script/force.sh", "PMC", NULL };
+	char *envp_shutdown[] =
+	{ "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", "", NULL };
+
+	wmt_pwrbtn_debounce_value(power_up_debounce_value);
+	DPRINTK("[%s] start\n",__func__);
+	ret = call_usermodehelper(argv[0], argv, envp_shutdown, 0);
+	DPRINTK("[%s] sync end\n",__func__);
+}
 
 static void run_shutdown(struct work_struct *work)
 {
@@ -251,68 +293,342 @@ static void led_light(unsigned int count)
 }
 #endif
 
+unsigned int pmc_get_wakeup_status(void)
+{ 
+  return var_wakeup_sts;
+}
+EXPORT_SYMBOL(pmc_get_wakeup_status);
+
+int pmc_register_callback(unsigned int wakeup_event, void (*callback)(void *), void *callback_data)
+{
+  int return_data = 0;
+  unsigned int i;
+    
+  if (wakeup_event == 0)
+    return -EINVAL;
+
+  spin_lock(&wmt_pm_lock);
+  if (!register_callback_1st_flag) {
+    int i;
+    register_callback_1st_flag = 1;
+    for (i = 0; i < 32; i++) {
+      wmt_wakeup_event_tables[i].callback = NULL;
+      wmt_wakeup_event_tables[i].callback_data = NULL;
+    }
+  }
+  
+
+  for (i = 0; i < 32; i++) {
+    if ((wakeup_event >> i) & 0x1)
+      break;
+  }
+  
+  if (wmt_wakeup_event_tables[i].callback == NULL) {
+    wmt_wakeup_event_tables[i].callback = callback;
+    wmt_wakeup_event_tables[i].callback_data = callback_data;   
+    return_data = 0;
+  } else
+    return_data = -EINVAL;
+  
+  spin_unlock(&wmt_pm_lock);
+  
+  return return_data;
+}
+EXPORT_SYMBOL(pmc_register_callback);
+
+int pmc_unregister_callback(unsigned int wakeup_event)
+{
+  int return_data = 0;
+  unsigned int i;
+  
+  if (wakeup_event == 0)
+    return -EINVAL;
+
+  spin_lock(&wmt_pm_lock);
+
+  for (i = 0; i < 32; i++) {
+    if ((wakeup_event >> i) & 0x1)
+      break;
+  }
+  
+  if (wmt_wakeup_event_tables[i].callback != NULL) {
+    wmt_wakeup_event_tables[i].callback = NULL;
+    wmt_wakeup_event_tables[i].callback_data = NULL;
+    return_data = 0;
+  }else
+    return_data = -EINVAL;
+  spin_unlock(&wmt_pm_lock);  
+  
+  return return_data;
+}
+EXPORT_SYMBOL(pmc_unregister_callback);
+
+void pmc_disable_save_wakeup_events(void)
+{
+  	  spin_lock(&wmt_pm_lock);
+	  in_disable_wakeup = 1;
+	  wakeup_backup = PMWE_VAL;
+	  rmb();
+	  udelay(130);	  
+	  PMWE_VAL = 0;
+	  wmb();
+	  spin_unlock(&wmt_pm_lock);
+}
+
+void pmc_enable_wakeup_restore_events(void)
+{
+  	  spin_lock(&wmt_pm_lock);
+	  udelay(130);
+	  PMWE_VAL = wakeup_backup;
+	  wmb();
+	  in_disable_wakeup = 0;
+	  spin_unlock(&wmt_pm_lock);
+}
+
+void pmc_enable_wakeup_event(unsigned int wakeup_event, unsigned int type)
+{
+	  int which_bit, i;
+	  unsigned ori_type = 0;
+	  
+	  if (wakeup_event == 0)
+	    return;
+	  
+	  if (! pmlock_1st_flag) {
+	    pmlock_1st_flag = 1;
+	    spin_lock_init(&wmt_pm_lock);
+	  }
+#if 0
+	  var_wake_param |= wakeup_event;
+	  if (var_1st_flag == 0) {
+	    var_wake_dis_param &= (~wakeup_event);
+	    var_wake_en_param = var_wake_param;	  
+	  }
+	  if (wakeup_event < 0x100) {
+	    which_bit = 0;
+	    for (i = 0; i < 8; i++) {
+	      if ((wakeup_event >> i) & 0x1) {
+		which_bit = i;
+		break;
+	      }
+	    }
+	    var_wake_type &= (~(0xf << (which_bit * 4)));
+	    var_wake_type |= (type << (which_bit * 4));
+	    if (var_1st_flag == 0) {
+	      var_en_wake_type &= (~(0xf << (which_bit * 4)));
+	      var_en_wake_type |= (type << (which_bit * 4));
+	      var_en_wake_type_mask |= (0xf << (which_bit * 4));
+	    }
+	  } else if (wakeup_event >= 0x1000000) {
+	    unsigned int temp;
+	    temp = wakeup_event >> 24;
+	    which_bit = 0;
+	    for (i = 0; i < 8; i++) {
+	      if ((temp >> i) & 0x1) {
+		which_bit = i;
+		break;
+	      }
+	    }
+	    var_wake_type2 &= (~(0xf << (which_bit * 4)));
+	    var_wake_type2 |= (type << (which_bit * 4));
+	    if (var_1st_flag == 0) {
+	      var_en_wake_type2 &= (~(0xf << (which_bit * 4)));
+	      var_en_wake_type2 |= (type << (which_bit * 4));
+	      var_en_wake_type2_mask |= (0xf << (which_bit * 4));
+	    }
+	  }
+	  printk("XXX pmc_enable_wakeup_event %x %x %x\n",var_wake_param,var_wake_type,var_wake_type2);
+#else
+	  if (wakeup_event < 0x100) {
+	    which_bit = 0;
+	    for (i = 0; i < 8; i++) {
+	      if ((wakeup_event >> i) & 0x1) {
+		which_bit = i;
+		break;
+	      }
+	    }
+		ori_type = PMWT_VAL;
+		ori_type &= (~(0xf << (which_bit * 4)));
+	    ori_type |= (type << (which_bit * 4));
+		PMWT_VAL = ori_type; 
+
+	  } else if (wakeup_event >= 0x1000000) {
+	    unsigned int temp;
+	    temp = wakeup_event >> 24;
+	    which_bit = 0;
+	    for (i = 0; i < 8; i++) {
+	      if ((temp >> i) & 0x1) {
+		which_bit = i;
+		break;
+	      }
+	    }
+		ori_type = PMWTC_VAL;
+	    var_wake_type2 &= (~(0xf << (which_bit * 4)));
+	    var_wake_type2 |= (type << (which_bit * 4));
+		PMWTC_VAL = ori_type;
+	  }	  
+	  
+	  spin_lock(&wmt_pm_lock);
+	  if (! in_disable_wakeup) {
+	    udelay(130);
+	    PMWE_VAL |= wakeup_event;
+	    wmb();
+	  } else
+	    wakeup_backup |= wakeup_event; ;
+	  
+	  spin_unlock(&wmt_pm_lock);
+	  printk("XXX pmc_enable_wakeup_event %x %x\n",wakeup_event,type);
+#endif	  
+}
+EXPORT_SYMBOL(pmc_enable_wakeup_event);
+
+void pmc_disable_wakeup_event(unsigned int wakeup_event)
+{
+//	  int which_bit, i;  
+	  if (wakeup_event == 0)
+	    return;
+	  
+	  if (! pmlock_1st_flag) {
+	    pmlock_1st_flag = 1;
+	    spin_lock_init(&wmt_pm_lock);
+	  }
+ #if 0
+	  var_wake_param &= (~wakeup_event);
+	  if (var_1st_flag == 0) {
+	    var_wake_dis_param |= wakeup_event;	  
+	    var_wake_en_param &= ~(wakeup_event);
+	    
+	    if (wakeup_event < 0x100) {
+	      which_bit = 0;
+	      for (i = 0; i < 8; i++) {
+		if ((wakeup_event >> i) & 0x1) {
+		  which_bit = i;
+		  break;
+		}
+	      }
+	      var_en_wake_type &= (~(0xf << (which_bit * 4)));
+	      var_en_wake_type_mask &= (~(0xf << (which_bit * 4)));
+	    } else if (wakeup_event >= 0x1000000) {
+	      unsigned int temp;
+	      temp = wakeup_event >> 24;
+	      which_bit = 0;
+	      for (i = 0; i < 8; i++) {
+		if ((temp >> i) & 0x1) {
+		  which_bit = i;
+		  break;
+		}
+	      }
+	      var_en_wake_type2 &= (~(0xf << (which_bit * 4)));
+	      var_en_wake_type2_mask &= (~(0xf << (which_bit * 4)));
+	    }	    	    
+	  }
+	  printk("XXX pmc_disable_wakeup_event var_wake_param=0x%x\n",var_wake_param);
+#else
+	  spin_lock(&wmt_pm_lock);
+	  if (! in_disable_wakeup) {
+	    udelay(130);
+	    PMWE_VAL &= (~wakeup_event);
+	    wmb();
+	  } else
+	    wakeup_backup &= (~wakeup_event);
+	  spin_unlock(&wmt_pm_lock);
+	  printk("XXX pmc_disable_wakeup_event var_wake_param=0x%x\n",wakeup_event);
+#endif	  
+}
+EXPORT_SYMBOL(pmc_disable_wakeup_event);
 
 static irqreturn_t pmc_wakeup_isr(int this_irq, void *dev_id)
 {
 	unsigned int status;
 	unsigned long flags;
 
+	if (! pmlock_1st_flag) {
+	  pmlock_1st_flag = 1;
+	  spin_lock_init(&wmt_pm_lock);
+	}	
+	
 	status = PMWS_VAL;          /* Copy the wakeup status */
-	udelay(100);
-	PMWS_VAL = status;
+	if (var_during_suspend)
+	  var_wakeup_sts |= status;
+	rmb();
 	
-#ifdef KEYPAD_POWER_SUPPORT
-	if((status & BIT14) && kpadPower_dev) {
+	if (status) {
+		spin_lock(&wmt_pm_lock);
+		udelay(130);
+		PMWS_VAL = status;
+		wmb();
+		spin_unlock(&wmt_pm_lock);
+		
+	#ifdef KEYPAD_POWER_SUPPORT
+		if((status & BIT14) && kpadPower_dev) {
 
-		spin_lock_irqsave(&kpadPower_lock, flags);
-		if(!powerKey_is_pressed) {
-			powerKey_is_pressed = 1; 
-			input_report_key(kpadPower_dev, KEY_POWER, 1); //power key is pressed
-			input_sync(kpadPower_dev);
-			pressed_jiffies = jiffies;
-			wmt_pwrbtn_debounce_value(power_up_debounce_value);
-			DPRINTK("\n[%s]power key pressed -->\n",__func__);
-		} else {
-			input_event(kpadPower_dev, EV_KEY, KEY_POWER, 2); // power key repeat
-			input_sync(kpadPower_dev);
-			DPRINTK("\n[%s]power key repeat\n",__func__);
+			spin_lock_irqsave(&kpadPower_lock, flags);
+			if(!powerKey_is_pressed) {
+				powerKey_is_pressed = 1; 
+				input_report_key(kpadPower_dev, KEY_POWER, 1); //power key is pressed
+				input_sync(kpadPower_dev);
+				pressed_jiffies = jiffies;
+				wmt_pwrbtn_debounce_value(power_up_debounce_value);
+				DPRINTK("\n[%s]power key pressed -->\n",__func__);
+				time1 = jiffies_to_msecs(jiffies);
+			} else {
+				input_event(kpadPower_dev, EV_KEY, KEY_POWER, 2); // power key repeat
+				input_sync(kpadPower_dev);
+				DPRINTK("\n[%s]power key repeat\n",__func__);
 
+			}
+			//disable_irq(IRQ_PMC_WAKEUP);
+			spin_unlock_irqrestore(&kpadPower_lock, flags);
+			mod_timer(&kpadPower_timer, jiffies + power_button_timeout);
 		}
-		//disable_irq(IRQ_PMC_WAKEUP);
-		spin_unlock_irqrestore(&kpadPower_lock, flags);
-		mod_timer(&kpadPower_timer, jiffies + power_button_timeout);
-	}
-#endif
+	#endif
+		
+		if (status & BIT14) {       /* Power button wake up */
+	#if defined(SOFT_POWER_SUPPORT) && defined(CONFIG_PROC_FS)
+			softpower_data = 1;
+	#endif
+			/*schedule_work(&PMC_shutdown);*/
+		}
+		
+		if (!var_during_suspend) {
+		  unsigned int i;
+		  for (i = 0; i < 32; i++) {
+		    if ((status >> i) & 0x1) {
+		      if (wmt_wakeup_event_tables[i].callback)
+			wmt_wakeup_event_tables[i].callback(wmt_wakeup_event_tables[i].callback_data);
+		    }
+		  }
+		}
 
 
-    
-	if (status & BIT14) {       /* Power button wake up */
-#if defined(SOFT_POWER_SUPPORT) && defined(CONFIG_PROC_FS)
-		softpower_data = 1;
-#endif
-		/*schedule_work(&PMC_shutdown);*/
+	#if 0	
+		if (status & (1 << WKS_UHC)) {       /* UHC wake up */
+			PMWE_VAL &= ~(1 << WKS_UHC);
+		}
+
+		if (status & (1 << WKS_UDC)) {       /* UDC wake up jakie */
+			PMWE_VAL &= ~(1 << WKS_UDC);
+		}
+		
+		
+
+	#ifdef RTC_WAKEUP_SUPPORT
+		if (status & BIT15)        /* Check RTC wakeup status bit */
+			PMWS_VAL |= BIT15;
+	#endif
+
+	#ifdef MOUSE_WAKEUP_SUPPORT
+		if(status & BIT11)
+			PMWS_VAL |= BIT11;
+	#endif
+
+	#ifdef KB_WAKEUP_SUPPORT
+		if(status & BIT11)
+			PMWS_VAL |= BIT10;
+	#endif
+	#endif	
 	}
 	
-	if (status & (1 << WKS_UHC)) {       /* UHC wake up */
-		PMWE_VAL &= ~(1 << WKS_UHC);
-	}
-
-#ifdef RTC_WAKEUP_SUPPORT
-	if (status & BIT15)        /* Check RTC wakeup status bit */
-		PMWS_VAL |= BIT15;
-#endif
-
-#ifdef MOUSE_WAKEUP_SUPPORT
-	if(status & BIT11)
-		PMWS_VAL |= BIT11;
-#endif
-
-#ifdef KB_WAKEUP_SUPPORT
-	if(status & BIT11)
-		PMWS_VAL |= BIT10;
-#endif
-
-	return IRQ_HANDLED;
+	return IRQ_HANDLED;		
 }
 
 extern int PM_device_PostSuspend(void);
@@ -424,6 +740,12 @@ static void wmt_pm_standby(void)
 			/* l2x0 controller is disabled */
 			writel_relaxed(l2x0_aux, l2x0_base + L2X0_AUX_CTRL);
 
+			if( en_static_address_filtering == 1 )
+			{
+				writel_relaxed(address_filtering_end, l2x0_base + 0xC04);
+				writel_relaxed((address_filtering_start | 0x01), l2x0_base + 0xC00);
+			}
+
 			writel_relaxed(0x110, l2x0_base + L2X0_TAG_LATENCY_CTRL);
 			writel_relaxed(0x110, l2x0_base + L2X0_DATA_LATENCY_CTRL);
 			power_cntrl = readl_relaxed(l2x0_base + L2X0_POWER_CTRL) | L2X0_DYNAMIC_CLK_GATING_EN | L2X0_STNDBY_MODE_EN;
@@ -443,11 +765,14 @@ static void wmt_pm_standby(void)
 }
 
 extern void wmt_assem_suspend(void);
-
+extern int wmt_suspend_target(unsigned, unsigned);
+extern char use_dvfs;
 /* wmt_pm_suspend()
  *
  * Entry to the power-off suspend hibernation mode.
  */
+volatile unsigned int Wake_up_enable = 0;
+
 static void wmt_pm_suspend(void)
 {
 	unsigned int saved[SAVED_SIZE];
@@ -494,11 +819,22 @@ static void wmt_pm_suspend(void)
 	hib_phy_addr = *(unsigned int *) exec_at;
 	exec_at = base + (hib_phy_addr - LOADER_ADDR);
 
+//	if (use_dvfs)
+//	  wmt_suspend_target(0, CPUFREQ_RELATION_L);
+
 	save_plla_speed(plla_div);
 	//led_light(2);
 	
 //	theKernel = (void (*)(int))exec_at; 
 //	theKernel(4);
+	{
+		int i;
+		for (i = 0; i < 16; i++) {
+			* ((unsigned int *)0xfe140040 + i) = 0x0;
+			* ((unsigned int *)0xfe150040 + i) = 0x0;
+		}
+	}
+
 	wmt_assem_suspend();
 
 	/* do wm_io_set in w-loader*/
@@ -519,6 +855,13 @@ static void wmt_pm_suspend(void)
 	restore_plla_speed(plla_div);	/* restore plla clock register */
 
 	PMPB_VAL |= 1;				/* cant not clear RGMii connection */
+	
+	* ((unsigned int *)0xfe140054) = 0x0;
+
+	pmc_disable_save_wakeup_events();	
+	pmc_disable_wakeup_event(Wake_up_enable);
+
+	udelay(130);	
 
 #ifdef CONFIG_CACHE_L2X0
 	if( l2x0_onoff == 1)
@@ -527,6 +870,12 @@ static void wmt_pm_suspend(void)
 		{
 			/* l2x0 controller is disabled */
 			writel_relaxed(l2x0_aux, l2x0_base + L2X0_AUX_CTRL);
+
+			if( en_static_address_filtering == 1 )
+			{
+				writel_relaxed(address_filtering_end, l2x0_base + 0xC04);
+				writel_relaxed((address_filtering_start | 0x01), l2x0_base + 0xC00);
+			}
 
 			writel_relaxed(0x110, l2x0_base + L2X0_TAG_LATENCY_CTRL);
 			writel_relaxed(0x110, l2x0_base + L2X0_DATA_LATENCY_CTRL);
@@ -556,14 +905,38 @@ static void wmt_pm_suspend(void)
  *
  * Note: Only support PM_SUSPEND_STANDBY and PM_SUSPEND_MEM
  */
+int wmt_trigger_resume_kpad = 0;
+int wmt_trigger_resume_notify = 0;
+
+void wmt_resume_kpad(void)
+{
+	DPRINTK(KERN_ALERT "\n[%s]power key pressed\n",__func__);
+	powerKey_is_pressed = 1; 
+	input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
+	input_sync(kpadPower_dev);
+	pressed_jiffies = jiffies;
+	mod_timer(&kpadPower_timer, jiffies + power_button_timeout);
+}
+
+void wmt_resume_notify(void)
+{
+	input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
+	input_sync(kpadPower_dev);
+	input_report_key(kpadPower_dev, KEY_POWER, 0); //power key is released
+	input_sync(kpadPower_dev);		
+}
+
 unsigned int pmc_wake_sts; 
 static int wmt_pm_enter(suspend_state_t state)
 {
 	unsigned int status;
-	unsigned int wakeup_notify;
-	volatile unsigned int Wake_up_enable = 0;
-	volatile unsigned int Wake_up_type = 0 /*, Wake_up_Ctype = 0*/;
+//	unsigned int wakeup_notify;
+
+	volatile unsigned int Wake_up_type = 0 , Wake_up_Ctype = 0;
+	int notify_framwork = 0;
     
+	Wake_up_enable = 0;
+	
 	if (!((state == PM_SUSPEND_STANDBY) || (state == PM_SUSPEND_MEM))) {
 		printk(KERN_ALERT "%s, Only support PM_SUSPEND_STANDBY and PM_SUSPEND_MEM\n", DRIVER_NAME);
 		return -EINVAL;
@@ -573,8 +946,8 @@ static int wmt_pm_enter(suspend_state_t state)
 	if (var_wake_en){
 		
 #ifdef RTC_WAKEUP_SUPPORT
-		if (var_wake_param & BIT15)
-			Wake_up_enable |= (PMWE_RTC);    
+		if (var_wake_param & (1 << WKS_RTC))
+			Wake_up_enable |= (1 << WKS_RTC);    
 #endif
 
 #ifdef CONFIG_KBDC_WAKEUP
@@ -593,81 +966,170 @@ static int wmt_pm_enter(suspend_state_t state)
 #endif
 #endif
 
-#if 0	
+#if 1	
 		/*UDC wake up source*/
-		if (var_wake_param & BIT21){
+		if (var_wake_param & (1 << WKS_UDC)){
 			Wake_up_enable |= (1<<WKS_UDC);    
-			Wake_up_type   |= PMWT_WAKEUP(WKS_UDC,PMWT_RISING);
+		}
+#endif
+
+#if 1	
+		/*UDC2 wake up source*/
+		if (var_wake_param & (1 << WKS_UDC2)){
+			unsigned int temp_type;
+			Wake_up_enable |= (1<<WKS_UDC2);  
+			temp_type = (var_wake_type & 0xf000000) >> 24;
+			Wake_up_type   |= PMWT_WAKEUP(WKS_UDC2,temp_type);
 		}
 #endif
 
 #if 0
 	/*CF wake up source*/
 		Wake_up_enable |= (1<<WKS_CF);    
-		Wake_up_Ctype   |= PMWT_WAKEUP(WKS_CF,PMWT_EDGE);
+		Wake_up_Ctype   |= PMWT_C_WAKEUP(WKS_CF,PMWT_EDGE);
 #endif
 	/*
 	 * choose wake up event
 	 */
-#if 0   
+#if 1   
 	//UHC  
-		if (var_wake_param & BIT20){
+		if (var_wake_param & (1 << WKS_UHC)){
 			if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
 			{
 				Wake_up_enable |= (1 << WKS_UHC);
-				Wake_up_type |= PMWT_WAKEUP(WKS_UHC,PMWT_ONE);
 			} else {                                              /* PM_SUSPEND_MEM */
 				Wake_up_enable |= (1 << WKS_UHC);
-				Wake_up_type |= PMWT_WAKEUP(WKS_UHC,PMWT_ONE);
 			}
 		}
 #endif
 #ifdef CIR_WAKEUP_SUPPORT   
-		if (var_wake_param & BIT22){  
+		if (var_wake_param & (1 << WKS_CIR)){  
 			if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
 			{
 				Wake_up_enable |= (1 << WKS_CIR);
-				Wake_up_type   |= PMWT_C_WAKEUP(WKS_CIR,PMWT_RISING);
 			} else {                                              /* PM_SUSPEND_MEM */
 				Wake_up_enable |= (1 << WKS_CIR);
-				Wake_up_type   |= PMWT_C_WAKEUP(WKS_CIR,PMWT_RISING);
 			}
 		}
 #endif
 #ifdef CONFIG_BATTERY_WMT
-		if (var_wake_param & BIT0){  
+		if (var_wake_param & (1 << WKS_SRC0)){  
 			if(battery_used){
 				unsigned int temp_type;
 				if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
 				{
 					Wake_up_enable |= (1 << WKS_SRC0);
 					temp_type = (var_wake_type & 0xf) >> 0;
-					Wake_up_type   |= PMWT_C_WAKEUP(WKS_SRC0,temp_type);
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC0,temp_type);
 				} else {                                              /* PM_SUSPEND_MEM */
 					Wake_up_enable |= (1 << WKS_SRC0);
 					temp_type = (var_wake_type & 0xf) >> 0;
-					Wake_up_type   |= PMWT_C_WAKEUP(WKS_SRC0,temp_type);
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC0,temp_type);
 				}
 			}
 		}
 #endif
 
-		if(var_wake_param & BIT3){//gri
+		if (var_wake_param & (1 << WKS_SRC1)){  
+				unsigned int temp_type;
+				if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
+				{
+					Wake_up_enable |= (1 << WKS_SRC1);
+					temp_type = (var_wake_type & 0xf0) >> 4;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC1,temp_type);
+				} else {                                              /* PM_SUSPEND_MEM */
+					Wake_up_enable |= (1 << WKS_SRC1);
+					temp_type = (var_wake_type & 0xf0) >> 4;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC1,temp_type);
+				}
+		}
+
+		if (var_wake_param & (1 << WKS_SRC2)){  
+				unsigned int temp_type;
+				if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
+				{
+					Wake_up_enable |= (1 << WKS_SRC2);
+					temp_type = (var_wake_type & 0xf00) >> 8;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC2,temp_type);
+				} else {                                              /* PM_SUSPEND_MEM */
+					Wake_up_enable |= (1 << WKS_SRC2);
+					temp_type = (var_wake_type & 0xf00) >> 8;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC2,temp_type);
+				}
+		}
+
+		if(var_wake_param & (1 << WKS_SRC3)){//gri ecc
 			unsigned int temp_type;
 			if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
 			{
 				Wake_up_enable |= (1 << WKS_SRC3);
 				temp_type = (var_wake_type & 0xf000) >> 12;
-				Wake_up_type   |= PMWT_C_WAKEUP(WKS_SRC3,temp_type);
+				Wake_up_type   |= PMWT_WAKEUP(WKS_SRC3,temp_type);
 			} else {                                              /* PM_SUSPEND_MEM */
 				Wake_up_enable |= (1 << WKS_SRC3);
 				temp_type = (var_wake_type & 0xf000) >> 12;
-				Wake_up_type   |= PMWT_C_WAKEUP(WKS_SRC3,temp_type);
+				Wake_up_type   |= PMWT_WAKEUP(WKS_SRC3,temp_type);
 			}
 		}
 
+		if (var_wake_param & (1 << WKS_SRC4)){  
+				unsigned int temp_type;
+				if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
+				{
+					Wake_up_enable |= (1 << WKS_SRC4);
+					temp_type = (var_wake_type & 0xf0000) >> 16;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC4,temp_type);
+				} else {                                              /* PM_SUSPEND_MEM */
+					Wake_up_enable |= (1 << WKS_SRC4);
+					temp_type = (var_wake_type & 0xf0000) >> 16;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC4,temp_type);
+				}
+		}
 
-#ifdef ETH_WAKEUP_SUPPORT
+		if (var_wake_param & (1 << WKS_SRC5)){  
+				unsigned int temp_type;
+				if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
+				{
+					Wake_up_enable |= (1 << WKS_SRC5);
+					temp_type = (var_wake_type & 0xf00000) >> 20;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC5,temp_type);
+				} else {                                              /* PM_SUSPEND_MEM */
+					Wake_up_enable |= (1 << WKS_SRC5);
+					temp_type = (var_wake_type & 0xf00000) >> 20;
+					Wake_up_type   |= PMWT_WAKEUP(WKS_SRC5,temp_type);
+				}
+		}
+
+		if(var_wake_param & (1 << WKS_EBM)){//gri ebm
+			unsigned int temp_type;
+			if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
+			{
+				Wake_up_enable |= (1 << WKS_EBM);
+				temp_type = (var_wake_type2 & 0xf);
+				Wake_up_Ctype   |= PMWT_C_WAKEUP(WKS_EBM,temp_type);
+			} else {                                              /* PM_SUSPEND_MEM */
+				Wake_up_enable |= (1 << WKS_EBM);
+				temp_type = (var_wake_type2 & 0xf);
+				Wake_up_Ctype   |= PMWT_C_WAKEUP(WKS_EBM,temp_type);
+			}
+		}
+
+		if(var_wake_param & (1 << WKS_MDM)){//gri mdm
+			unsigned int temp_type;
+			if (state == PM_SUSPEND_STANDBY)                      /* PM_SUSPEND_MEM */
+			{
+				Wake_up_enable |= (1 << WKS_MDM);
+				temp_type = (var_wake_type2 & 0xf0) >> 4;
+				Wake_up_Ctype   |= PMWT_C_WAKEUP(WKS_MDM,temp_type);
+			} else {                                              /* PM_SUSPEND_MEM */
+				Wake_up_enable |= (1 << WKS_MDM);
+				temp_type = (var_wake_type2 & 0xf0) >> 4;
+				Wake_up_Ctype   |= PMWT_C_WAKEUP(WKS_MDM,temp_type);
+			}
+		}
+
+#if 0
+//#ifdef ETH_WAKEUP_SUPPORT
 		//if((eth & 0x90) == 0x90) {
 		if(((eth & 0x10) == 0x10) && (var_wake_param & BIT17)) {
 			//enable Wake On Lan
@@ -682,14 +1144,14 @@ static int wmt_pm_enter(suspend_state_t state)
 	}
 
 	/* only enable fiq in normal operation */
-	local_fiq_disable();
-	local_irq_disable();
+	//local_fiq_disable();
+	//local_irq_disable();
 	/* disable system OS timer */
 	OSTC_VAL &= ~OSTC_ENABLE;
 
 	/*wake up status W1C*/
-	PMWS_VAL = PMWS_VAL;     
-	WMT_WAKE_UP_EVENT = 0;
+	//PMWS_VAL = (PMWS_VAL & Wake_up_sts_mask);     
+	WMT_WAKE_UP_EVENT = 0;//wmt_pm_enter
 	/* FIXME, 2009/09/15 */
 	//PMCDS_VAL = PMCDS_VAL;
 
@@ -698,9 +1160,12 @@ static int wmt_pm_enter(suspend_state_t state)
 	 * synced into RTC clock domain. Which means two consequtive write cannot be too close
 	 * (wait more than 2~3 RTC clocks). Otherwise the later write data will be missing.
 	 */
-	PMWT_VAL = Wake_up_type;    
-	PMWE_VAL = Wake_up_enable;
-
+	//udelay(130);
+	PMWTC_VAL |= Wake_up_Ctype;
+	PMWT_VAL |= Wake_up_type;    
+	//PMWE_VAL |= Wake_up_enable;	
+	wakeup_backup |= Wake_up_enable;
+	pmc_enable_wakeup_restore_events();
 
 	/*set power button debounce value*/
 	wmt_pwrbtn_debounce_value(resume_debounce_value);
@@ -723,33 +1188,37 @@ static int wmt_pm_enter(suspend_state_t state)
 	 */
 
 	status = PMWS_VAL;
-	WMT_WAKE_UP_EVENT = PMWS_VAL;
-	udelay(100);
+	WMT_WAKE_UP_EVENT = PMWS_VAL;//wmt_pm_enter
+	status = (status & Wake_up_sts_mask);
+	var_wakeup_sts |= status;
+	udelay(130);
 	PMWS_VAL = status;
 	pmc_wake_sts = status;
 
+	//notify_framwork=1;
 
 #ifdef KEYPAD_POWER_SUPPORT	
 	if (status & BIT14) {
+		wmt_trigger_resume_kpad = 1;
+#if 0		
 		DPRINTK(KERN_ALERT "\n[%s]power key pressed\n",__func__);
 		powerKey_is_pressed = 1; 
 		input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
 		input_sync(kpadPower_dev);
 		pressed_jiffies = jiffies;
 		mod_timer(&kpadPower_timer, jiffies + power_button_timeout);
+#endif		
 	}
 #endif
 
-#ifdef ETH_WAKEUP_SUPPORT
+#if 0 
+//#ifdef ETH_WAKEUP_SUPPORT
 	//if((eth & 0x90) == 0x90) {
 	if(((eth & 0x10) == 0x10) && (var_wake_param & BIT17)) {		
 		//enable Wake On Lan
 		if (status & BIT17) {
 			DPRINTK(KERN_ALERT "\n[%s]ETH WOL event\n",__func__);
-			input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
-			input_sync(kpadPower_dev);
-			input_report_key(kpadPower_dev, KEY_POWER, 0); //power key is released
-			input_sync(kpadPower_dev);
+//			notify_framwork=1;
 		}
 	} else {
 		//disable Wake On Lan
@@ -763,22 +1232,50 @@ static int wmt_pm_enter(suspend_state_t state)
 		if (var_wake_param & BIT0){  
 			if (status & BIT0) {		
 				DPRINTK(KERN_ALERT "\n[%s]Battery low event\n",__func__);
-				input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
-				input_sync(kpadPower_dev);
-				input_report_key(kpadPower_dev, KEY_POWER, 0); //power key is released
-				input_sync(kpadPower_dev);
+			if (var_fake_power_button & BIT0)
+				notify_framwork=1;
 			}
 		}
 	}
 #endif	
 
-	if(var_wake_param & BIT3){//gri
+	if(var_wake_param & BIT1){//gri
+		if (status & BIT1) {		
+			DPRINTK(KERN_ALERT "\n[%s]CEC event\n",__func__);
+			if (var_fake_power_button & BIT1)
+				notify_framwork=1;
+		}
+	}
+	
+	if(var_wake_param & BIT2){//gri
+		if (status & BIT2) {		
+			DPRINTK(KERN_ALERT "\n[%s]CEC event\n",__func__);
+		if (var_fake_power_button & BIT2)
+			notify_framwork=1;
+		}
+	}	
+
+	if(var_wake_param & BIT3){//gri ecc
 		if (status & BIT3) {		
 			DPRINTK(KERN_ALERT "\n[%s]CEC event\n",__func__);
-			input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
-			input_sync(kpadPower_dev);
-			input_report_key(kpadPower_dev, KEY_POWER, 0); //power key is released
-			input_sync(kpadPower_dev);
+		if (var_fake_power_button & BIT3)
+			notify_framwork=1;
+		}
+	}
+	
+	if(var_wake_param & BIT4){//gri ecc
+		if (status & BIT4) {		
+			DPRINTK(KERN_ALERT "\n[%s]CEC event\n",__func__);
+		if (var_fake_power_button & BIT4)
+			notify_framwork=1;
+		}
+	}
+	
+	if(var_wake_param & BIT5){//gri ecc
+		if (status & BIT5) {		
+			DPRINTK(KERN_ALERT "\n[%s]CEC event\n",__func__);
+		if (var_fake_power_button & BIT5)
+			notify_framwork=1;
 		}
 	}
 	
@@ -786,15 +1283,70 @@ static int wmt_pm_enter(suspend_state_t state)
 	if(var_wake_param & BIT22){
 		if (status & BIT22) {		
 			DPRINTK(KERN_ALERT "\n[%s]CIR wake up event\n",__func__);
-			input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
-			input_sync(kpadPower_dev);
-			input_report_key(kpadPower_dev, KEY_POWER, 0); //power key is released
-			input_sync(kpadPower_dev);
+		if (var_fake_power_button & BIT22)
+			notify_framwork=1;
 		}
 	}
 #endif
 
+#if 1	
+		/*UDC wake up source*/
+		if (var_wake_param & BIT21){
+			if (status & BIT21) {		
+				DPRINTK(KERN_ALERT "\n[%s]UDC wake up event\n",__func__);
+			if (var_fake_power_button & BIT21)
+				notify_framwork=1;
+			}
+		}		
+#endif
 
+#if 1	
+		/*UDC2 wake up source*/
+		if (var_wake_param & BIT6){
+			if (status & BIT6) {		
+				DPRINTK(KERN_ALERT "\n[%s]UDC wake up event\n",__func__);
+			if (var_fake_power_button & BIT6)
+				notify_framwork=1;
+			}
+		}		
+#endif
+
+#if 1	
+		/*UHC wake up source*/
+		if (var_wake_param & BIT20){
+			if (status & BIT20) {		
+				DPRINTK(KERN_ALERT "\n[%s]UDC wake up event\n",__func__);
+			if (var_fake_power_button & BIT20)
+				notify_framwork=1;
+			}
+		}
+#endif
+
+	if (var_wake_param & (1 << WKS_MDM)){
+		if (status & (1 << WKS_MDM)) {		
+			DPRINTK(KERN_ALERT "\n[%s]MDM wake up event\n",__func__);
+		if (var_fake_power_button & (1 << WKS_MDM))
+			notify_framwork=1;
+		}
+	}
+
+	if (var_wake_param & (1 << WKS_EBM)){
+		if (status & (1 << WKS_EBM)) {		
+			DPRINTK(KERN_ALERT "\n[%s]EBM wake up event\n",__func__);
+		if (var_fake_power_button & (1 << WKS_EBM))
+			notify_framwork=1;
+		}
+	}		
+
+	if (notify_framwork) {
+		wmt_trigger_resume_notify = 1;
+#if 0		
+		input_report_key(kpadPower_dev, KEY_POWER, 1); /*power key is pressed*/
+		input_sync(kpadPower_dev);
+		input_report_key(kpadPower_dev, KEY_POWER, 0); //power key is released
+		input_sync(kpadPower_dev);		
+#endif
+	}
 
 #ifdef RTC_WAKEUP_SUPPORT
 	RTAS_VAL = 0x0;       	/* Disable RTC alarm */
@@ -807,14 +1359,14 @@ static int wmt_pm_enter(suspend_state_t state)
 	OSTC_VAL |= OSTC_ENABLE;
 
 	//udelay(200);  /* delay for resume not complete */
-
-	local_irq_enable();
-	local_fiq_enable();
-
+	
 	/*
 	 * reset wakeup settings
 	 */
-	PMWE_VAL = 0;
+	//PMWE_VAL = 0;
+	
+//	local_irq_enable();
+//	local_fiq_enable();
 
 	return 0;
 }
@@ -950,6 +1502,12 @@ static inline void kpadPower_timeout(unsigned long fcontext)
 
 	struct input_dev *dev = (struct input_dev *) fcontext;
 	//printk("-------------------------> kpadPower time out\n");
+	time2 = jiffies_to_msecs(jiffies);
+	if ((time2 - time1) > 2000 && sync_counter > 4) { //2000 msec
+		schedule_work(&PMC_sync);
+		//DPRINTK("1[%s]dannier count=%d jiffies=%lu, %d\n",__func__, sync_counter, jiffies,jiffies_to_msecs(jiffies));
+	} //else
+		//DPRINTK("0[%s]dannier count=%d jiffies=%lu, %d\n",__func__, sync_counter, jiffies,jiffies_to_msecs(jiffies));
 	DPRINTK(KERN_ALERT "\n[%s]kpadPower time out GPIO_ID_GPIO_VAL = %x\n",__func__,GPIO_ID_GPIO_VAL);
 	if(!kpadPower_dev)
 		return;
@@ -962,9 +1520,11 @@ static inline void kpadPower_timeout(unsigned long fcontext)
 		powerKey_is_pressed = 0;
 		wmt_pwrbtn_debounce_value(power_on_debounce_value);
 		DPRINTK("[%s]power key released\n",__func__);
+		sync_counter = 0;
 	}else {
 		DPRINTK("[%s]power key not released\n",__func__);
 		mod_timer(&kpadPower_timer, jiffies + power_button_timeout);
+		sync_counter++;
 	}
 
 	spin_unlock_irq(&kpadPower_lock);
@@ -983,9 +1543,9 @@ static int __init wmt_pm_init(void)
 	int varlen = 256;
 	
 	//gri
-	char wake_buf[80];
+	char wake_buf[100];
 	char wake_varname[] = "wmt.pmc.param";
-	int wake_varlen = 80;	
+	int wake_varlen = 100;	
 	
 #ifdef ETH_WAKEUP_SUPPORT
 	char eth_env_name[] = "wmt.eth.param";
@@ -1036,18 +1596,57 @@ static int __init wmt_pm_init(void)
 #endif
 
 //gri
+	if (! pmlock_1st_flag) {
+	  pmlock_1st_flag = 1;
+	  spin_lock_init(&wmt_pm_lock);
+	}
+
+	if (!register_callback_1st_flag) {
+	  int i;
+	  register_callback_1st_flag = 1;
+	  for (i = 0; i < 32; i++) {
+	    wmt_wakeup_event_tables[i].callback = NULL;
+	    wmt_wakeup_event_tables[i].callback_data = NULL;
+	  }
+	}
+
+	var_1st_flag = 1;
 	if (wmt_getsyspara(wake_varname, wake_buf, &wake_varlen) == 0) {
-		sscanf(wake_buf,"%x:%x:%x",
+		sscanf(wake_buf,"%x:%x:%x:%x:%x",
 						&var_wake_en,
 						&var_wake_param,
-						&var_wake_type);		
+						&var_wake_type,
+						&var_wake_type2,
+						&var_fake_power_button);		
 	}
 	else {
 		var_wake_en = 1;
 		var_wake_param = 0x00408001;
 		var_wake_type = 0x00002000;
+		var_wake_type2 = 0x0;
+		var_fake_power_button = 0x0;
 	}
-	printk("[%s] var define var_wake_en=%x var_wake_param=%x\n",__func__, var_wake_en, var_wake_param);
+	
+#if 0	
+	if (var_wake_dis_param)
+	  var_wake_param &= ~(var_wake_dis_param);
+	if (var_wake_en_param) {
+	  var_wake_param |= var_wake_en_param;
+	  if (var_en_wake_type2_mask) {
+	    var_wake_type2 &= (~var_en_wake_type2_mask);
+	    var_wake_type2 |= var_en_wake_type2;
+	  }
+	  if (var_en_wake_type_mask) {
+	    var_wake_type &= (~var_en_wake_type_mask);
+	    var_wake_type |= var_en_wake_type;
+	  }	  
+	}	
+#endif	
+	
+	Wake_up_sts_mask = (var_wake_param | BIT14); // add power button
+	
+	printk("[%s] var define var_wake_en=%x var_wake_param=%x var_wake_type=%x var_wake_type2=%x var_fake_power_button=%x\n",
+	__func__, var_wake_en, var_wake_param, var_wake_type, var_wake_type2, var_fake_power_button);
 
 #ifdef ETH_WAKEUP_SUPPORT
 	if(wmt_getsyspara(eth_env_name,eth_env_val,&eth_varlen) == 0) {
@@ -1073,15 +1672,17 @@ static int __init wmt_pm_init(void)
 
 #ifdef CONFIG_CACHE_L2X0
 	if(wmt_getsyspara("wmt.l2c.param",buf,&varlen) == 0)
-		sscanf(buf,"%d:%x:%x",&l2x0_onoff, &l2x0_aux, &l2x0_prefetch_ctrl );
+		sscanf(buf,"%d:%x:%x",&l2x0_onoff, &l2x0_aux, &l2x0_prefetch_ctrl, &en_static_address_filtering, &address_filtering_start, &address_filtering_end);
 #endif
 
 	/* Press power button (either hard-power or soft-power) will trigger a power button wakeup interrupt*/
 	/* Press reset button will not trigger any PMC wakeup interrupt*/
 	/* Hence, force write clear all PMC wakeup interrupts before request PMC wakeup IRQ*/
+	spin_unlock(&wmt_pm_lock);
 	PMWS_VAL = PMWS_VAL;
 
 	INIT_WORK(&PMC_shutdown, run_shutdown);
+	INIT_WORK(&PMC_sync, run_sync);
 
 #ifdef RTC_WAKEUP_SUPPORT
 	PMWE_VAL &= ~(PMWE_RTC);
@@ -1126,9 +1727,10 @@ static int __init wmt_pm_init(void)
 	PMPB_VAL = 0;
 
 #endif	/* defined(SOFT_POWER_SUPPORT) && defined(CONFIG_PROC_FS)*/
+	spin_unlock(&wmt_pm_lock);
 
 		/*read power button debounce value*/
-		if (wmt_getsyspara(varname, buf, &varlen) == 0){
+	if (wmt_getsyspara(varname, buf, &varlen) == 0){
 			sscanf(buf,"%d:%d:%d",
 						&power_on_debounce_value,
 						&resume_debounce_value,

@@ -129,7 +129,7 @@ bool back_menu_pressed = false;
                           KEYPAD_ROW2_GPIO_pin | \
                           KEYPAD_ROW3_GPIO_pin)
                           
-#define KEYPAD_PIN_SHARE (BIT6 | BIT24)
+#define KEYPAD_PIN_SHARE BIT6
 
 #define KEYPAD_PIN_SHARING_SEL_VAL GPIO_PIN_SHARING_SEL_4BYTE_VAL
 /* ROW0 ~ ROW3 */

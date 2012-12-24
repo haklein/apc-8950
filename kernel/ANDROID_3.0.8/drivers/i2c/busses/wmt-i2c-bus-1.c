@@ -36,6 +36,8 @@
 #include <mach/irqs.h>
 #include <mach/wmt-i2c-bus.h>
 #include <linux/slab.h>
+#include <linux/pm.h>
+#include <linux/syscore_ops.h>
 
 #ifdef __KERNEL__
 
@@ -76,6 +78,7 @@ static unsigned int speed_mode = 0;
 unsigned int wmt_i2c1_speed_mode = 0;
 static unsigned int is_master = 1;/*master:1, slave:0*/
 unsigned int wmt_i2c1_is_master = 1;
+static unsigned int wmt_i2c1_power_state = 0;/*0:power on, 1:suspend, 2:shutdown*/
 EXPORT_SYMBOL(wmt_i2c1_is_master);
 
 /**/
@@ -143,6 +146,10 @@ static int i2c_send_request(
 	if (slave_addr == WMT_I2C_API_I2C_ADDR)
 		return ret ;
 
+	if (wmt_i2c1_power_state == 2) {
+		printk("I2C1 has been shutdown\n");
+		return -EIO;
+	}
 	i2c.isr_nack    	= 0 ;
 	i2c.isr_byte_end	= 0 ;
 	i2c.isr_timeout 	= 0 ;
@@ -1018,8 +1025,29 @@ static struct i2c_adapter i2c_wmt_ops = {
 	.nr                     = 1,
 };
 
+#ifdef CONFIG_PM
+static void i2c_shutdown(void)
+{
+	printk("i2c1 shutdown\n");
+	wmt_i2c1_power_state = 2;
+	while (!list_empty(&wmt_i2c_fifohead))
+		msleep(1);
+	while (1) {/*wait busy clear*/
+		if ((REG16_VAL(I2C1_CSR_ADDR) & I2C_STATUS_MASK) == I2C_READY)
+			break ;
+		msleep(1);
+	}
+	return;
+}
+#else
+#endif
 extern int wmt_i2c_add_bus(struct i2c_adapter *);
 extern int wmt_i2c_del_bus(struct i2c_adapter *);
+
+static struct syscore_ops wmt_i2c_syscore_ops =
+{
+	.shutdown	= i2c_shutdown,
+};
 
 static int __init i2c_adap_wmt_init(void)
 {
@@ -1132,6 +1160,11 @@ static int __init i2c_adap_wmt_init(void)
 
 	INIT_LIST_HEAD(&wmt_i2c_fifohead);
 
+#ifdef CONFIG_PM
+	register_syscore_ops(&wmt_i2c_syscore_ops);
+#endif
+
+	wmt_i2c1_power_state = 0;
 	printk(KERN_INFO "i2c: successfully added bus\n");
 
 #ifdef I2C_REG_TEST

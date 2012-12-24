@@ -2692,6 +2692,31 @@ out:
 }
 
 /**
+ * get_para - [MTD Interface] NAND get retry and eslc information
+ * @mtd:	MTD device structure
+ * @to:		offset to write to
+ * @ops:	oob operation description structure
+ */
+static int get_para(struct mtd_info *mtd, int chipnr)
+{
+	struct nand_chip *chip = mtd->priv;
+	int ret = -ENOTSUPP;
+	
+	nand_get_device(chip, mtd, FL_READING);
+
+	
+	chip->select_chip(mtd, chipnr);
+
+	chip->get_para(mtd, chip);
+
+	chip->select_chip(mtd, -1);
+
+
+	nand_release_device(mtd);
+	return ret;
+}
+
+/**
  * single_erease_cmd - [GENERIC] NAND standard block erase command function
  * @mtd:	MTD device structure
  * @page:	the page address of the block which will be erased
@@ -3471,7 +3496,7 @@ static struct WMT_nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 {
 	struct WMT_nand_flash_dev *type = NULL, type_env;
 	int i, dev_id, maf_idx, ret = 0;
-	unsigned int id = 0;
+	unsigned int id = 0, id_5th = 0;
 	char varval[200], *s = NULL, *tmp, varname[] = "wmt.io.nand";
 	unsigned int varlen = 200, value;
 
@@ -3491,6 +3516,10 @@ static struct WMT_nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 		dev_id = chip->read_byte(mtd);
 		id += ((unsigned char)dev_id) <<((2-i)*8);
 	}
+	for (i = 0; i < 2; i++) {
+		dev_id = chip->read_byte(mtd);
+		id_5th += ((unsigned char)dev_id) <<((3-i)*8);
+	}
 	//        printk("nand chip device maf_id is %x, and dev_id is %x\n",*maf_id,dev_id);
 
 	/* Lookup the flash id */
@@ -3498,8 +3527,11 @@ static struct WMT_nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 		if (dev_id == nand_flash_ids[i].id) {*/
 	for (i = 0; WMT_nand_flash_ids[i].dwFlashID != 0; i++) {
 		if (((unsigned int)id + ((*maf_id)<<24)) == WMT_nand_flash_ids[i].dwFlashID) {
+			if (WMT_nand_flash_ids[i].dwFlashID == 0x98D79432)
+				if (id_5th != WMT_nand_flash_ids[i].dwFlashID2)
+					continue;
 			type =  &WMT_nand_flash_ids[i];
-			//                      printk("find nand chip device id\n");
+			//printk("find nand chip device id\n");
 			break;
 		}
 	}
@@ -3540,17 +3572,17 @@ static struct WMT_nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 		type_env.dwRWTimming = value; s = tmp+1;
 		copy_filename(type_env.ProductName, s, MAX_PRODUCT_NAME_LENGTH);
 
-		if (type_env.dwBlockCount < 1024 || type_env.dwBlockCount > 8192) {
+		if (type_env.dwBlockCount < 1024 || type_env.dwBlockCount > 16384) {
 			printk(KERN_INFO "dwBlockCount = 0x%x is abnormal\n", type_env.dwBlockCount);
 			goto list;
 		}
-		if (type_env.dwPageSize < 512  || type_env.dwPageSize > 8192) {
+		if (type_env.dwPageSize < 512  || type_env.dwPageSize > 16384) {
 			printk(KERN_INFO "dwPageSize = 0x%x is abnormal\n", type_env.dwPageSize);
 			goto list;
 		}
 		if (type_env.dwPageSize > 512)
 			type_env.options = NAND_SAMSUNG_LP_OPTIONS | NAND_NO_READRDY | NAND_NO_AUTOINCR;
-		if (type_env.dwBlockSize < (1024*64)  || type_env.dwBlockSize > (8192*64)) {
+		if (type_env.dwBlockSize < (1024*64)  || type_env.dwBlockSize > (16384*256)) {
 			printk(KERN_INFO "dwBlockSize = 0x%x is abnormal\n", type_env.dwBlockSize);
 			goto list;
 		}
@@ -3764,7 +3796,6 @@ int nand_scan_ident(struct mtd_info *mtd, int maxchips,
 	}
 
 	/* Check for a chip array */
-	if (chip_swap == 0)
 	for (i = 1; i < maxchips; i++) {
 		chip->select_chip(mtd, i);
 		/* See comment in nand_get_flash_type for reset */
@@ -4078,6 +4109,7 @@ int nand_scan_tail(struct mtd_info *mtd)
 	mtd->block_isbad = nand_block_isbad;
 	mtd->block_markbad = nand_block_markbad;
 	mtd->writebufsize = mtd->writesize;
+	mtd->get_para = get_para;
 
 	/* propagate ecc.layout to mtd_info */
 	mtd->ecclayout = chip->ecc.layout;

@@ -644,7 +644,8 @@ static int qh_unlink_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 	qh_put (qh);
 
 	/* maybe turn off periodic schedule */
-	return disable_periodic(ehci);
+	//return disable_periodic(ehci);
+	return 0;
 }
 
 static void intr_deschedule (struct ehci_hcd *ehci, struct ehci_qh *qh)

@@ -322,6 +322,22 @@ void kernel_restart_prepare(char *cmd)
 	device_shutdown();
 	syscore_shutdown();
 }
+extern int wmt_setsyspara(char *varname, char *varval);
+extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
+char *strtok(char *str, char *ctrl)
+{
+	char *p=str,*q=ctrl,*r; 
+	while (p&&q&&*p&&*q) {
+		for(r=p,q=ctrl;*r&&*q&&*r==*q;r++,q++);
+			if(q&&*q)
+				p++; // not match change to next char
+			else {
+				*p='\0';
+				break;
+			} // catch and return
+	}
+	return str; 
+}
 
 /**
  *	kernel_restart - reboot the system
@@ -333,11 +349,83 @@ void kernel_restart_prepare(char *cmd)
  */
 void kernel_restart(char *cmd)
 {
+	int ret = 0, searched = 0, len = 30;
+	char buf[30], *token = NULL, *p = NULL;
 	kernel_restart_prepare(cmd);
-	if (!cmd)
+	if (!cmd) {
 		printk(KERN_EMERG "Restarting system.\n");
-	else
+		ret = wmt_getsyspara("boot-method", buf, &len);
+		if (ret) {
+			printk(KERN_EMERG "get env boot-method fail\n");
+			goto NO_SET_ENV;
+		}
+		printk(KERN_EMERG "boot-method = %s\n", buf);
+	
+		p = strstr((char *)buf, "recovery");
+			if (p == NULL)
+				goto NO_SET_ENV;
+			if (strcmp(p, "recovery") == 0) {
+				token = strtok((char *)buf, "recovery");
+			 	if (token) {
+			 		strcat(token, "normal");
+			 		printk(KERN_EMERG "set boot-method = %s ", token);
+					ret = wmt_setsyspara("boot-method", token);
+					if (ret)
+						printk(KERN_EMERG " fail\n");
+					else
+						printk(KERN_EMERG " success\n");
+				}
+			}
+	} else {
 		printk(KERN_EMERG "Restarting system with command '%s'.\n", cmd);
+		ret = wmt_getsyspara("boot-method", buf, &len);
+		if (ret) {
+			printk(KERN_EMERG "get env boot-method fail\n");
+			goto NO_SET_ENV;
+		}
+		printk(KERN_EMERG "boot-method = %s\n", buf);
+		/* //debug
+		if (strcmp(buf, "boot-nand") == 0)
+			strcat(buf, "-normal");
+		printk(KERN_EMERG "boot-method = %s\n", buf);
+		*/
+		if (strcmp(cmd, "normal") == 0) {
+			p = strstr((char *)buf, "recovery");
+			if (p == NULL)
+				goto NO_SET_ENV;
+			if (strcmp(p, "recovery") == 0)
+				searched = 2;
+		} else if (strcmp(cmd, "recovery") == 0) {
+			p = strstr((char *)buf, "normal");
+			if (p == NULL)
+				goto NO_SET_ENV;
+			if (strcmp(p, "normal") == 0)
+				searched = 1;
+		} else
+			goto NO_SET_ENV;
+
+		//printk(KERN_EMERG "searched = %s\n", p);
+		if (searched == 0 || p == NULL) {
+			goto NO_SET_ENV;
+		} else if (searched == 1) {
+		 	token = strtok((char *)buf, "normal");
+		 	strcat(token, "recovery");
+		} else if (searched == 2) {
+			token = strtok((char *)buf, "recovery");
+		 	strcat(token, "normal");
+		}
+		printk(KERN_EMERG "set boot-method = %s\n", token);
+		
+		if (token) {
+			ret = wmt_setsyspara("boot-method", token);
+			if (ret)
+				printk(KERN_EMERG "set env fail\n");
+			else
+				printk(KERN_EMERG "set env success\n");
+		}
+	}
+NO_SET_ENV:
+
 	kmsg_dump(KMSG_DUMP_RESTART);
 	machine_restart(cmd);
 }

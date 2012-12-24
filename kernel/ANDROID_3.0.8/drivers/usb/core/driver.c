@@ -1303,8 +1303,8 @@ static void choose_wakeup(struct usb_device *udev, pm_message_t msg)
 	if (udev->state == USB_STATE_SUSPENDED && w != udev->do_remote_wakeup)
 		pm_runtime_resume(&udev->dev);
 	//CharlesTu, disable remote wakeup
-	//udev->do_remote_wakeup = w;
-	udev->do_remote_wakeup = 0;
+	udev->do_remote_wakeup = w;
+	//udev->do_remote_wakeup = 0;
 }
 
 /* The device lock is held by the PM core */
@@ -1654,8 +1654,8 @@ static int autosuspend_check(struct usb_device *udev)
 		return -EOPNOTSUPP;
 	}
 	//CharlesTu, disable remote wakeup
-	//udev->do_remote_wakeup = w;
-	udev->do_remote_wakeup = 0;
+	udev->do_remote_wakeup = w;
+	//udev->do_remote_wakeup = 0;
 	return 0;
 }
 

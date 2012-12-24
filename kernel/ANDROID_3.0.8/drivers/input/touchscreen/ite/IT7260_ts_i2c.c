@@ -346,7 +346,7 @@ static void Read_Point(struct IT7260_ts_data *ts) {
 						flag = 1;
 					}
 					if (flag) {
-						input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
+						//input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 						input_mt_sync(ts->input_dev);
 						input_report_key(ts->input_dev, BTN_TOUCH, 0);
 						input_sync(ts->input_dev);
@@ -380,7 +380,7 @@ static void Read_Point(struct IT7260_ts_data *ts) {
 					//pr_info("=Read_Point1 x=%d y=%d p=%d=\n",xraw,yraw,pressure_point);
 
 					input_report_abs(ts->input_dev, ABS_MT_TRACKING_ID, 0);
-					input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 1);
+					//input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 1);
 					//input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, pressure_point);
 					//input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, 1);
 					input_report_abs(ts->input_dev, ABS_MT_POSITION_X, xraw);
@@ -401,7 +401,7 @@ static void Read_Point(struct IT7260_ts_data *ts) {
 
 					//pr_info("=Read_Point2 x=%d y=%d p=%d=\n",xraw,yraw,pressure_point);
 					input_report_abs(ts->input_dev, ABS_MT_TRACKING_ID, 1);
-					input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 1);
+					//input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 1);
 					//input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, pressure_point);
 					//input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, 1);
 					input_report_abs(ts->input_dev, ABS_MT_POSITION_X, xraw);
@@ -1073,7 +1073,7 @@ static int __devinit IT7260_ts_init(void) {
 
 	input_set_abs_params(input_dev, ABS_MT_POSITION_X, 0, SCREEN_X_RESOLUTION, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_POSITION_Y, 0, SCREEN_Y_RESOLUTION, 0, 0);
-	input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 1, 0, 0);
+	//input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 1, 0, 0);
 	//input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 1, 0, 0);
 	//input_set_abs_params(input_dev, ABS_MT_WIDTH_MAJOR, 0, 15, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_TRACKING_ID, 0, 2, 0, 0);

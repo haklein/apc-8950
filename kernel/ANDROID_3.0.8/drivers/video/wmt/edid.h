@@ -115,7 +115,7 @@ typedef struct {
 	unsigned int establish_timing;
 	edid_timing_t standard_timing[8];
 	vpp_timing_t detail_timing[4];
-	edid_timing_t cea_timing[6];
+	vpp_timing_t cea_timing[6];
 	char cea_vic[8];
 	unsigned int pixel_clock_limit;
 	unsigned int option;
@@ -126,7 +126,7 @@ extern edid_info_t edid_info;
 extern int edid_msg_enable;
 
 extern int edid_parse(char * edid,edid_info_t *info);
-extern int edid_find_support(edid_info_t *info,unsigned int resx,unsigned int resy,int freq);
+extern int edid_find_support(edid_info_t *info,unsigned int resx,unsigned int resy,int freq,vpp_timing_t **timing);
 extern void edid_dump(char *edid);
 extern int edid_checksum(char *edid,int len);
 extern unsigned int edid_get_hdmi_phy_addr(void);

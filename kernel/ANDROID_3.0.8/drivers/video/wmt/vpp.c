@@ -276,112 +276,34 @@ void vpp_mod_set_clock(vpp_mod_t mod,vpp_flag_t enable,int force)
 
 void vpp_clr_framebuf(vpp_mod_t mod)
 {
-	vdo_color_fmt colfmt;
-	unsigned int yaddr,caddr;
-	unsigned int ysize,csize;
-	unsigned int fb_w;
-#ifdef WMT_FTBLK_VPU
-	unsigned int act_w,xoff,yoff;
-#endif
-	unsigned int fb_h;
+	vdo_framebuf_t fb;
+	vpp_mod_base_t *p_mod;
+	int ysize,csize;	
 
-	return;
-
-	switch(mod){
-		case VPP_MOD_GOVRH:
-#if 1
-			{
-				vdo_framebuf_t *fb;
-
-				fb = &p_govrh->fb_p->fb;
-				colfmt = fb->col_fmt;
-				fb_w = fb->fb_w;
-				fb_h = fb->fb_h;
-				yaddr = fb->y_addr;
-				caddr = fb->c_addr;
-			}
-#else
-			colfmt = govrh_get_color_format(p_govrh);
-			govrh_get_fb_addr(p_govrh,&yaddr,&caddr);
-			govrh_get_fb_info(p_govrh,&fb_w,&act_w,&xoff,&yoff);
-			fb_h = p_govrh->fb_p->fb.fb_h;
-#endif
-			break;
-#ifdef WMT_FTBLK_VPU
-		case VPP_MOD_VPU:
-			colfmt = vpu_r_get_color_format();
-			vpu_r_get_fb_addr(&yaddr,&caddr);
-			vpu_r_get_fb_info(&fb_w,&act_w,&xoff,&yoff);
-			fb_h = p_vpu->fb_p->fb.fb_h;
-			break;
-#endif
-#ifdef WMT_FTBLK_GOVW
-		case VPP_MOD_GOVW:
-			{
-				vdo_framebuf_t *fb;
-
-				fb = &p_govw->fb_p->fb;
-				colfmt = fb->col_fmt;
-				fb_w = fb->fb_w;
-				fb_h = fb->fb_h;
-				yaddr = fb->y_addr;
-				caddr = fb->c_addr;
-			}
-			break;
-#endif
-		case VPP_MOD_GOVRH2:
-			{
-				vdo_framebuf_t *fb;
-
-				fb = &p_govrh2->fb_p->fb;
-				colfmt = fb->col_fmt;
-				fb_w = fb->fb_w;
-				fb_h = fb->fb_h;
-				yaddr = fb->y_addr;
-				caddr = fb->c_addr;
-			}
-			break;
-		default:
-			return;
+	if( (p_mod = vpp_mod_get_base(mod)) == 0 ){
+		return;
 	}
 
-	ysize = fb_w * fb_h;
-	switch(colfmt){
-		case VDO_COL_FMT_ARGB:
-			ysize = 4 * ysize;
-			csize = 0;
-			break;
-    	case VDO_COL_FMT_RGB_888:
-		case VDO_COL_FMT_RGB_666:
-			ysize = 3 * ysize;
-			csize = 0;
-			break;
-	    case VDO_COL_FMT_RGB_1555:
-	    case VDO_COL_FMT_RGB_5551:
-		case VDO_COL_FMT_RGB_565:
-			ysize = 2 * ysize;
-			csize = 0;
-			break;
-		case VDO_COL_FMT_YUV444:
-			csize = 2 * ysize;
-			break;
-		case VDO_COL_FMT_YUV422H:
-			csize = ysize;
-			break;
-		case VDO_COL_FMT_YUV420:
-		default:			
-			csize = ysize / 2;
-			break;
-	}
+	if( p_mod->fb_p == 0 )
+		return;
 
+	if( p_mod->fb_p->get_framebuf ){
+		p_mod->fb_p->get_framebuf(&fb);
+	}
+	else {
+		fb = p_mod->fb_p->fb;
+	}
+	vpp_get_colfmt_bpp(fb.col_fmt,&ysize,&csize);
 	if( ysize ){
-		memset((char *)mb_phys_to_virt(yaddr),0,ysize);
+		ysize = fb.fb_w * fb.fb_h * ysize / 8;
+		memset((char *)mb_phys_to_virt(fb.y_addr),0,ysize);
 	}
 
 	if( csize ){
-		memset((char *)mb_phys_to_virt(caddr),0x80,csize);
+		csize = fb.fb_w * fb.fb_h * csize / 8;
+		memset((char *)mb_phys_to_virt(fb.c_addr),0x80,csize);
 	}
-//	DPRINT("[VPP] clr fb Y(0x%x,%d) C(0x%x,%d),%s\n",yaddr,ysize,caddr,csize,vpp_colfmt_str[colfmt]);
+//	DPRINT("[VPP] clr fb Y(0x%x,%d) C(0x%x,%d),%s\n",fb.y_addr,ysize,fb.c_addr,csize,vpp_colfmt_str[fb.col_fmt]);
 }
 
 vpp_display_format_t vpp_get_fb_field(vdo_framebuf_t *fb)
@@ -541,6 +463,7 @@ void vpp_show_timing(vpp_timing_t *tmr,vpp_clock_t *clk)
 
 void vpp_show_framebuf(char *str,vdo_framebuf_t *fb)
 {
+	if( fb == 0 ) return;
 	DPRINT("----- %s framebuf -----\n",str);
 	DPRINT("Y addr 0x%x, size %d\n",fb->y_addr,fb->y_size);
 	DPRINT("C addr 0x%x, size %d\n",fb->c_addr,fb->c_size);
@@ -1063,6 +986,17 @@ void vpp_set_video_scale(vdo_view_t *vw)
 
 //	vpp_irqproc_work(VPP_INT_GOVW_VBIE,0,0,1);
 
+#ifdef CONFIG_VPU_DIRECT_PATH
+	if( g_vpp.vpu_path == VPP_VPATH_VPU ){
+		vpp_clock_t tmr;
+		govrh_get_tg(p_govrh2,&tmr);
+		
+		vw->resx_visual = tmr.end_pixel_of_active - tmr.begin_pixel_of_active;
+		vw->resy_visual = tmr.end_line_of_active - tmr.begin_line_of_active;
+		vw->posx = vw->posy = 0;
+	}
+#endif
+
 	if( vpp_check_view(vw) ){
 		if( vpp_check_dbg_level(VPP_DBGLVL_SCALE) ){
 			DPRINT("[VPP] view not change\n");
@@ -1137,6 +1071,14 @@ vpp_timing_t *vpp_get_video_mode(unsigned int resx,unsigned int resy,unsigned in
 	int i,j;
 	vpp_timing_t *ptr;
 	unsigned int line_pixel;
+	int first_order = 1;
+
+	if( vpp_video_mode_table[*index].option & VPP_OPT_INTERLACE ){
+		if( vpp_video_mode_table[*index].option != vpp_video_mode_table[*index+1].option ){
+			*index=*index-1;
+			printk("1 index %d\n",*index);
+		}
+	}
 
 	is_fps = ( fps_pixclk >= 1000000 )? 0:1;
 	for(i=*index;;i++){
@@ -1159,6 +1101,12 @@ vpp_timing_t *vpp_get_video_mode(unsigned int resx,unsigned int resy,unsigned in
 				if( ptr->hpixel != resx ){
 					break;
 				}
+				
+				line_pixel = (ptr->option & VPP_OPT_INTERLACE)? (ptr->vpixel*2):ptr->vpixel;
+				if( line_pixel != resy ){
+					break;
+				}
+				
 				if( is_fps ){
 					if( fps_pixclk == vpp_get_video_mode_fps(ptr) ){
 						*index = j;
@@ -1166,8 +1114,10 @@ vpp_timing_t *vpp_get_video_mode(unsigned int resx,unsigned int resy,unsigned in
 					}
 				}
 				else {
-					if( (fps_pixclk/1000) == (ptr->pixel_clock/1000) ){
-						*index = j;
+					if( (fps_pixclk/10000) == (ptr->pixel_clock/10000) ){
+						if( first_order ) // keep first order for same pixclk
+							*index = j;
+						first_order = 0;
 					}
 					if( (fps_pixclk) == (ptr->pixel_clock) ){
 						*index = j;
@@ -1185,7 +1135,7 @@ vpp_timing_t *vpp_get_video_mode(unsigned int resx,unsigned int resy,unsigned in
 			i++;
 		}
 	}
-get_mode_end:	
+get_mode_end:
 	ptr = (vpp_timing_t *) &vpp_video_mode_table[*index];
 //	printk("[VPP] get video mode %dx%d@%d,index %d,0x%x\n",resx,resy,fps_pixclk,index,vpp_vout_option);	
 	return ptr;	
@@ -1517,11 +1467,133 @@ void vpp_vpu_sw_reset(void)
 }
 #endif //fan
 
+void vpp_get_sys_parameter(void)
+{
+	char buf[40];
+	int varlen = 40;
+
+	// vpp attribute by default
+	g_vpp.disp_fb_max = VPP_DISP_FB_NUM;
+	g_vpp.disp_fb_cnt = 0;
+	g_vpp.video_quality_mode = 1;
+	g_vpp.scale_keep_ratio = 1;
+	g_vpp.disp_fb_keep = 0;
+#ifdef CONFIG_VPP_GOVRH_FBSYNC
+	g_vpp.fbsync_enable = 1;
+#endif
+	g_vpp.hdmi_audio_interface = VPP_HDMI_AUDIO_SPDIF;
+	g_vpp.hdmi_cp_enable = 1;
+	g_vpp.govw_vfp = 5;
+	g_vpp.govw_vbp = 5;
+	g_vpp.vpp_path = VPP_VPATH_GE;
+	g_vpp.vpu_path = VPP_VPATH_GOVW;
+#ifdef CONFIG_VPP_GE_DIRECT_PATH
+	g_vpp.ge_path = VPP_VPATH_GE;
+#else
+	g_vpp.ge_path = VPP_VPATH_GOVW;
+#endif
+#ifdef WMT_FTBLK_GOVRH
+	g_vpp.govr = p_govrh2;
+#endif
+
+#if 0
+	if( wmt_getsyspara("wmt.display.direct_path",buf,&varlen) == 0 ){
+		sscanf(buf,"%d",&g_vpp.direct_path);
+		DPRINT("[VPP] direct path %d\n",g_vpp.direct_path);
+	}
+#endif
+
+	if( wmt_getsyspara("wmt.display.hdmi_audio_inf",buf,&varlen) == 0 ){
+		if( memcmp(buf,"i2s",3) == 0 ){
+//			DPRINT("[VPP] hdmi audio i2s\n");
+			g_vpp.hdmi_audio_interface = VPP_HDMI_AUDIO_I2S;
+		}
+		else if( memcmp(buf,"spdif",5) == 0 ){
+//			DPRINT("[VPP] hdmi audio spdif\n");
+			g_vpp.hdmi_audio_interface = VPP_HDMI_AUDIO_SPDIF;
+		}	
+	}
+
+	if( wmt_getsyspara("wmt.display.hdmi.vmode",buf,&varlen) == 0 ){
+		if( memcmp(buf,"720p",4) == 0 ){
+			g_vpp.hdmi_video_mode = 720;
+		}
+		else if( memcmp(buf,"1080p",5) == 0 ){
+			g_vpp.hdmi_video_mode = 1080;
+		}
+		else {
+			g_vpp.hdmi_video_mode = 0;
+		}
+		DPRINT("[VPP] HDMI video mode %d\n",g_vpp.hdmi_video_mode);
+	}
+
+#ifdef CONFIG_GOVW_SCL_PATH
+	if( wmt_getsyspara("wmt.display.path",(unsigned char *)buf,&varlen) == 0){
+		unsigned int arg[4];
+
+		vpp_parse_param(buf,arg,4,0);
+		g_vpp.ge_path = arg[0];
+		g_vpp.vpu_path = arg[1];
+		p_govw->fb_p->fb.img_w = arg[2];
+		p_govw->fb_p->fb.img_h = arg[3];
+		p_govw->fb_p->fb.fb_w = vpp_calc_align(p_govw->fb_p->fb.img_w,VPP_FB_WIDTH_ALIGN);
+		p_govw->fb_p->fb.fb_h = p_govw->fb_p->fb.img_h;
+		g_vpp.vpp_path = g_vpp.ge_path;
+		DPRINT("[VPP] path GE(%s),VPU(%s),res(%dx%d)\n",vpp_vpath_str[arg[0]],vpp_vpath_str[arg[1]],arg[2],arg[3]);
+	}
+#endif
+
+#ifdef CONFIG_VPP_OVERSCAN
+	/* [uboot parameter] fb param : no:xresx:yres:xoffset:yoffset */
+	if( wmt_getsyspara("wmt.display.fb.res",buf,&varlen) == 0 ){
+		unsigned int parm[5];
+
+		MSG("fb param : %s\n",buf);
+		vpp_parse_param(buf,(unsigned int *)parm,5,0);
+		MSG("fb parm %d res(%dx%d),offset(%d,%d)\n",parm[0],parm[1],parm[2]);
+		vout_info[parm[0]].fb_xres = parm[1];
+		vout_info[parm[0]].fb_yres = parm[2];
+		vout_info[parm[0]].fb_xoffset = parm[3];
+		vout_info[parm[0]].fb_yoffset = parm[4];
+		vout_info->fb_clr = ~0x0;
+	}
+#endif
+
+	g_vpp.mb_colfmt = VPP_UBOOT_COLFMT;
+	/* [uboot parameter] fb param : no:xresx:yres:xoffset:yoffset */
+	if( wmt_getsyspara("wmt.gralloc.param",buf,&varlen) == 0 ){
+		unsigned int parm[1];
+
+		vpp_parse_param(buf,(unsigned int *)parm,1,0x1);
+		if( parm[0] == 32 )
+			g_vpp.mb_colfmt = VDO_COL_FMT_ARGB;
+		MSG("mb colfmt : %s,%s\n",buf,vpp_colfmt_str[g_vpp.mb_colfmt]);
+	}
+	p_govrh->fb_p->fb.col_fmt = p_govrh2->fb_p->fb.col_fmt = g_vpp.mb_colfmt;
+
+	/* [uboot parameter] dual display : 0-single display, 1-dual display */
+	g_vpp.dual_display = 1;
+	if( wmt_getsyspara("wmt.display.dual",buf,&varlen) == 0){
+		unsigned int parm[1];
+		
+		MSG("display dual : %s\n",buf);
+		vpp_parse_param(buf,(unsigned int *)parm,1,0);
+		g_vpp.dual_display = parm[0];
+	}
+
+	if( g_vpp.dual_display == 0 ){
+		g_vpp.alloc_framebuf = 0;
+	}
+	
+} /* End of vpp_get_sys_parameter */
+
 void vpp_init(void)
 {
 	vpp_mod_base_t *mod_p;
 	unsigned int mod_mask;
 	int i;
+		
+	vpp_get_sys_parameter();
 
 	auto_pll_divisor(DEV_NA12,CLK_ENABLE,0,0);
 	auto_pll_divisor(DEV_VPP,CLK_ENABLE,0,0);
@@ -1544,6 +1616,8 @@ void vpp_init(void)
 		}
 		MSG("[VPP] govrh preinit %d\n",g_vpp.govrh_preinit);
 	}
+#else
+	govrh_set_clock(p_govrh,65000000);	// for HDMI registers access
 #endif
 
 	if( g_vpp.alloc_framebuf ){
@@ -1569,13 +1643,14 @@ void vpp_init(void)
 
 		g_vpp.govr->fb_p->fb.y_addr = num_physpages << PAGE_SHIFT;
 		g_vpp.govr->fb_p->fb.c_addr = 0;
-		g_vpp.govr->fb_p->fb.col_fmt = VPP_UBOOT_COLFMT;
+		g_vpp.govr->fb_p->fb.col_fmt = g_vpp.mb_colfmt;
 	}
-	
+#ifdef CONFIG_GOVW_SCL_PATH
 	if( g_vpp.vpp_path == VPP_VPATH_GOVW_SCL ){
 		govrh_set_tg_enable(p_govrh,0);
 		vpp_clr_framebuf(VPP_MOD_GOVRH);
 	}
+#endif
 #endif
 	// init video out module first
 	if( g_vpp.govrh_preinit == 0 ){
@@ -1607,8 +1682,14 @@ void vpp_init(void)
 #endif
 
 #ifdef WMT_FTBLK_LVDS
-	if(	(!g_vpp.govrh_preinit) && (vppif_reg32_read(HDMI_ENABLE)==0))
-		lvds_init();
+	if(	!g_vpp.govrh_preinit ){
+#ifdef WMT_FTBLK_HDMI
+		if(vppif_reg32_read(HDMI_ENABLE)==0)
+#endif
+		{
+			lvds_init();
+		}
+	}
 #endif
 #ifdef WMT_FTBLK_VOUT_HDMI
 	hdmi_init();
@@ -1652,10 +1733,19 @@ void vpp_init(void)
 void vpp_config(vout_info_t *info)
 {
 	vdo_framebuf_t *fb = 0;
+	unsigned int vo_mask,govr_mask;
 
 	DBG_MSG("Enter(%dx%d@%d),vir(%d,%d)\n",info->resx,info->resy,info->fps,info->resx_virtual,info->resy_virtual);
 
-	vout_check_info((g_vpp.dual_display)? info->vo_mask:VPP_VOUT_ALL,info);
+	if( (g_vpp.dual_display == 0) || g_vpp.virtual_display ){
+		govr_mask = 0xFF;
+	}
+	else {
+		govr_mask = (info->govr == p_govrh)? 0x1:0x2;
+	}
+	vo_mask = vout_get_mask(info);
+
+	vout_check_info(vo_mask,info);
 
 	if( info->govr == g_vpp.govr ){ // vpu path setting
 		DBG_MSG("vpu config(%s)\n",vpp_vpath_str[g_vpp.vpp_path]);
@@ -1667,18 +1757,20 @@ void vpp_config(vout_info_t *info)
 		}
 	}
 
-	if( (g_vpp.dual_display == 0) || (info->govr == p_govrh) ){
+	if( govr_mask & 0x1 ){
 		DBG_MSG("govrh1\n");
 		fb = &p_govrh->fb_p->fb;
+//govrh_get_framebuffer(p_govrh,fb);
 		fb->fb_w = info->resx_virtual;
 		fb->fb_h = info->resy_virtual;
 		fb->img_w = info->resx;
 		fb->img_h = info->resy;
 	}
 
-	if( (g_vpp.dual_display == 0) || (info->govr == p_govrh2) ){
+	if( govr_mask & 0x2 ){
 		DBG_MSG("govrh2\n");
 		fb = &p_govrh2->fb_p->fb;
+//govrh_get_framebuffer(p_govrh2,fb);
 		fb->fb_w = info->resx_virtual;
 		fb->fb_h = info->resy_virtual;
 		fb->img_w = info->resx;
@@ -1686,16 +1778,35 @@ void vpp_config(vout_info_t *info)
 	}
 
 	if( g_vpp.govrh_preinit == 0 ){
-		vout_set_tg_enable((g_vpp.dual_display)? info->vo_mask:VPP_VOUT_ALL,VPP_FLAG_DISABLE);
-		if( (g_vpp.dual_display == 0) || (info->govr == p_govrh) ){
+		int mif1,mif2;
+
+		mif1 = mif2 = 0;
+//		vout_set_tg_enable(vo_mask,VPP_FLAG_DISABLE);
+		if( govr_mask & 0x1 ){
+			mif1 = govrh_get_MIF_enable(p_govrh);
+			govrh_set_MIF_enable(p_govrh,VPP_FLAG_DISABLE);
 			govrh_set_framebuffer(p_govrh,fb);
+			if( fb->y_addr == 0 ){
+				vpp_show_framebuf("config govrh1",fb);
+			}
 		}
 		
-		if( (g_vpp.dual_display == 0) || (info->govr == p_govrh2) ){
+		if( govr_mask & 0x2 ){
+			mif2 = govrh_get_MIF_enable(p_govrh2);
+			govrh_set_MIF_enable(p_govrh2,VPP_FLAG_DISABLE);
 			govrh_set_framebuffer(p_govrh2,fb);
+			if( fb->y_addr == 0 ){
+				vpp_show_framebuf("config govrh2",fb);
+			}
 		}
-		vout_config((g_vpp.dual_display)? info->vo_mask:VPP_VOUT_ALL,info);
-		vout_set_tg_enable((g_vpp.dual_display)? info->vo_mask:VPP_VOUT_ALL,VPP_FLAG_ENABLE);
+		vout_config(vo_mask,info);
+//		vout_set_tg_enable(vo_mask,VPP_FLAG_ENABLE);
+		if( govr_mask & 0x1 ){
+			govrh_set_MIF_enable(p_govrh,mif1);
+		}
+		if( govr_mask & 0x2 ){
+			govrh_set_MIF_enable(p_govrh2,mif2);
+		}
 	}
 
 	if( info->govr == g_vpp.govr ){ // vpu path setting
@@ -1728,8 +1839,34 @@ void vpp_config(vout_info_t *info)
 #endif
 	}
 	g_vpp.govrh_preinit = 0;
+#ifdef CONFIG_VPP_OVERSCAN
+	if(info->fb_xres){
+		info->fb_clr = ~0x0;
+	}
+#endif
 	DBG_DETAIL("Leave\n");
 } /* End of vpp_config */
+
+#ifdef CONFIG_VPP_OVERSCAN
+void vpp_plugin_reconfig(int no)
+{
+	vout_info_t *vo_info;
+
+	DBG_MSG("%d\n",no);
+
+	if( (vo_info = vout_get_info_entry(no)) == 0 )
+		return;
+
+	if( vo_info->fb_xres == 0 )
+		return;
+
+	vo_info->resx = 1920;
+	vo_info->resy = 1080;
+	vo_info->pixclk = 60;
+	vpp_config(vo_info);
+	vpp_clr_framebuf(vo_info->govr_mod);
+}
+#endif
 
 void vpp_get_colfmt_bpp(vdo_color_fmt colfmt,int *y_bpp,int *c_bpp)
 {

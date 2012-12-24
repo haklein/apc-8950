@@ -116,6 +116,8 @@ static const unsigned long baudrate_table[] = {9600, 19200, 38400, 57600, 115200
 #define NAND_UBOOT_ENV2 "u-boot env. cfg. 2-NAND"
 #define NOR_UBOOT_ENV1 "u-boot env. cfg. 1-NOR"
 #define NOR_UBOOT_ENV2 "u-boot env. cfg. 2-NOR"
+#define EMMC_UBOOT_ENV1 "u-boot env. cfg. 1-EMMC"
+#define EMMC_UBOOT_ENV2 "u-boot env. cfg. 2-EMMC"
 
 #define NAND_ENV_BLK_LENGTH 9
 
@@ -141,6 +143,10 @@ static unsigned int ENV_MAX_SIZE;
 #define SPI_FLASH_TYPE  0
 #define NAND_FLASH_TYPE 2
 #define NOR_FLASH_TYPE  4
+#endif
+
+#ifndef EMMC_FLASH_TYPE
+#define EMMC_FLASH_TYPE 6
 #endif
 
 static unsigned int env_valid=0xFF, env_invalid=0xFF, nand_block, env_valid_offs, env_invalid_offs, mtd_init = 0;
@@ -366,6 +372,10 @@ static unsigned int env_init(void)
 		boot_str1 = NOR_UBOOT_ENV1;
 		boot_str2 = NOR_UBOOT_ENV2;
 		ENV_MAX_SIZE = NOR_ENV_MAX_SIZE;
+	} else {
+		bootflash = EMMC_FLASH_TYPE;
+		boot_str1 = EMMC_UBOOT_ENV1;
+		boot_str2 = EMMC_UBOOT_ENV2;
 	}
 
 	/*mtd_for_each_device(mtd);
@@ -501,7 +511,8 @@ next_blk:
 			printk(KERN_DEBUG "crc32 = 0x%x , env_ptr_nand->crc = 0x%x\n",
 			crc32, env_ptr_nand->crc);
 		}
-	} else {	//sfboot or norboot
+	} else if (bootflash == SPI_FLASH_TYPE || bootflash == NOR_FLASH_TYPE) {
+	//sfboot or norboot
 		if (!mtd_table[0])
 			ret = read_env_before_mtd_init(uenv, bootflash, offset);
 		else
@@ -971,3 +982,19 @@ out:
 	return rcode;
 }
 EXPORT_SYMBOL_GPL(wmt_setsyspara);
+/*
+ * Description
+ *    This function is used to get the WMT SoC information including
+ *    chipid & bondingid.
+ * Arguments
+ *    chipid : [OUT] return the chipid.
+ *    bondingid : [OUT] retur the bonding option value.
+ */
+int wmt_getsocinfo(unsigned int *chipid, unsigned int *bondingid)
+{
+	*chipid = SCC_CHIP_ID_VAL;
+	*bondingid = GPIO_BONDING_OPTION_4BYTE_VAL;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(wmt_getsocinfo);

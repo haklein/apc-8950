@@ -27,17 +27,19 @@
 #define COM_VIDEO_H
 
 /*-------------------- MODULE DEPENDENCY -------------------------------------*/
-#ifndef __KERNEL__
+#ifdef __KERNEL__
+#include <linux/bitops.h>         // for BIT
+#else
 #include <stdio.h>
 #include <string.h>
 //#include "../include/chiptop.h"  // for POST only
+#ifndef BIT
+#define BIT(x)              (1<<x)
+#endif
 #endif
 
 /*-------------------- EXPORTED PRIVATE CONSTANTS ----------------------------*/
 
-#ifndef BIT
-#define BIT(x)              (1<<x)
-#endif
 
 /*------------------------------------------------------------------------------
 
@@ -93,6 +95,7 @@ typedef struct {
 #define VDO_FLAG_INTERLACE		BIT(0)
 #define VDO_FLAG_MOTION_VECTOR	BIT(1)		/* frame buffer with motion vector table after C frame */
 #define VDO_FLAG_MB_ONE			BIT(2)		/* Y/C frame alloc in one mb */
+#define VDO_FLAG_MB_NO			BIT(3)		/* frame buffer is not alloc from mb */
 
 typedef struct {
 	unsigned int resx_src;       /* source x resolution */

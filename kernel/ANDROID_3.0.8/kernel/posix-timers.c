@@ -146,7 +146,7 @@ static int common_timer_del(struct k_itimer *timer);
 
 static enum hrtimer_restart posix_timer_fn(struct hrtimer *data);
 
-static struct k_itimer *__lock_timer(timer_t timer_id, unsigned long *flags);  //eason?
+static struct k_itimer *__lock_timer(timer_t timer_id, unsigned long *flags);
 
 #define lock_timer(tid, flags)						   \
 ({	struct k_itimer *__timr;					   \
@@ -197,8 +197,8 @@ static int posix_get_monotonic_raw(clockid_t which_clock, struct timespec *tp)
 	return 0;
 }
 
-/* Those functional don't be used.	 2012/3	marked by eason */
-/*static int posix_get_realtime_coarse(clockid_t which_clock, struct timespec *tp)
+
+static int posix_get_realtime_coarse(clockid_t which_clock, struct timespec *tp)
 {
 	*tp = current_kernel_time();
 	return 0;
@@ -215,7 +215,7 @@ static int posix_get_coarse_res(const clockid_t which_clock, struct timespec *tp
 {
 	*tp = ktime_to_timespec(KTIME_LOW_RES);
 	return 0;
-}*/
+}
 
 static int posix_get_boottime(const clockid_t which_clock, struct timespec *tp)
 {
@@ -231,54 +231,54 @@ static __init int init_posix_timers(void)
 {
 	struct k_clock clock_realtime = {
 		.clock_getres	= hrtimer_get_res,
-		.clock_get	= posix_clock_realtime_get, 
-		/*.clock_set	= posix_clock_realtime_set, //marked by eason 2012/3/6
+		.clock_get	= posix_clock_realtime_get,
+		.clock_set	= posix_clock_realtime_set,
 		.clock_adj	= posix_clock_realtime_adj,
 		.nsleep		= common_nsleep,
 		.nsleep_restart	= hrtimer_nanosleep_restart,
 		.timer_create	= common_timer_create,
 		.timer_set	= common_timer_set,
 		.timer_get	= common_timer_get,
-		.timer_del	= common_timer_del, */
+		.timer_del	= common_timer_del,
 	};
 	struct k_clock clock_monotonic = {
 		.clock_getres	= hrtimer_get_res,
 		.clock_get	= posix_ktime_get_ts,
-		/*.nsleep		= common_nsleep, //marked by eason 2012/3/6
+		.nsleep		= common_nsleep,
 		.nsleep_restart	= hrtimer_nanosleep_restart,
 		.timer_create	= common_timer_create,
 		.timer_set	= common_timer_set,
 		.timer_get	= common_timer_get,
-		.timer_del	= common_timer_del,*/
+		.timer_del	= common_timer_del,
 	};
 	struct k_clock clock_monotonic_raw = {
 		.clock_getres	= hrtimer_get_res,
 		.clock_get	= posix_get_monotonic_raw,
 	};
-	/*struct k_clock clock_realtime_coarse = {
+	struct k_clock clock_realtime_coarse = {
 		.clock_getres	= posix_get_coarse_res,
 		.clock_get	= posix_get_realtime_coarse,
 	};
 	struct k_clock clock_monotonic_coarse = {
 		.clock_getres	= posix_get_coarse_res,
 		.clock_get	= posix_get_monotonic_coarse,
-	};*/
+	};
 	struct k_clock clock_boottime = {
 		.clock_getres	= hrtimer_get_res,
 		.clock_get	= posix_get_boottime,
-		/*.nsleep		= common_nsleep,  //marked by eason 2012/3/6
+		.nsleep		= common_nsleep,
 		.nsleep_restart	= hrtimer_nanosleep_restart,
 		.timer_create	= common_timer_create,
 		.timer_set	= common_timer_set,
 		.timer_get	= common_timer_get,
-		.timer_del	= common_timer_del, */
+		.timer_del	= common_timer_del,
 	};
 
 	posix_timers_register_clock(CLOCK_REALTIME, &clock_realtime);
 	posix_timers_register_clock(CLOCK_MONOTONIC, &clock_monotonic);
 	posix_timers_register_clock(CLOCK_MONOTONIC_RAW, &clock_monotonic_raw);
-	/*posix_timers_register_clock(CLOCK_REALTIME_COARSE, &clock_realtime_coarse); //marked by eason 2012/3/6
-	posix_timers_register_clock(CLOCK_MONOTONIC_COARSE, &clock_monotonic_coarse); */
+	posix_timers_register_clock(CLOCK_REALTIME_COARSE, &clock_realtime_coarse);
+	posix_timers_register_clock(CLOCK_MONOTONIC_COARSE, &clock_monotonic_coarse);
 	posix_timers_register_clock(CLOCK_BOOTTIME, &clock_boottime);
 
 	posix_timers_cache = kmem_cache_create("posix_timers_cache",

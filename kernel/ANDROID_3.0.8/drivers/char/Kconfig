@@ -425,6 +425,17 @@ config WMT_VIBRATOR
           To compile this driver as a module, choose M here: the
 	  module will be called wmt_vibrate
 
+config CHARGE_SMB358
+        tristate "WMT SMB358 Charging-IC support"
+        depends on ARCH_WMT
+        default n
+        ---help---
+          Say Y here if you want to enable SMB358 charging IC driver.
+
+          To compile this driver as a module, choose M here: the
+          module will be called wmt_vibrate
+
+
 config DTLK
 	tristate "Double Talk PC internal speech card support"
 	depends on ISA

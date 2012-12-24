@@ -468,7 +468,7 @@ wmt_timer_interrupt(int irq, void *dev_id)
 		OSTS_VAL = OSTS_M1;
 		next_match = (OSM1_VAL += LATCH);
 		//do_set_rtc();
-	} while ((signed long)(next_match - wmt_read_oscr()) <= 0);
+	} while ((signed long)(next_match - wmt_read_oscr()) <= 10);
 
 	/* TODO: add do_profile()  */
 //	do_profile(regs);

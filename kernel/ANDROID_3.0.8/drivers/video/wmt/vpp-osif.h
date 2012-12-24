@@ -229,7 +229,9 @@ void vpp_lock(void);
 void vpp_unlock(void);
 int vpp_i2c_write(int id,unsigned int addr,unsigned int index,char *pdata,int len);
 int vpp_i2c_read(int id,unsigned int addr,unsigned int index,char *pdata,int len);
-int vpp_i2c_enhanced_ddc_read(unsigned int addr,unsigned int index,char *pdata,int len);
+int vpp_i2c_enhanced_ddc_read(int id,unsigned int addr,unsigned int index,char *pdata,int len);
+int vpp_i2c_init(int i2c_id,unsigned short addr);
+int vpp_i2c_release(void);
 
 #ifdef	__cplusplus
 }

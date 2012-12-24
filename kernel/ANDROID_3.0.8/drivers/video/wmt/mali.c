@@ -74,12 +74,16 @@ unsigned int mali_memory_size;
 unsigned int mali_mem_validation_base;
 unsigned int mali_mem_validation_size;
 unsigned int mali_ump_secure_id;
+unsigned int (*mali_get_ump_secure_id)(unsigned int addr, unsigned int size);
+void         (*mali_put_ump_secure_id)(unsigned int ump_id);
 
 EXPORT_SYMBOL(mali_memory_base);
 EXPORT_SYMBOL(mali_memory_size);
 EXPORT_SYMBOL(mali_mem_validation_base);
 EXPORT_SYMBOL(mali_mem_validation_size);
 EXPORT_SYMBOL(mali_ump_secure_id);
+EXPORT_SYMBOL(mali_get_ump_secure_id);
+EXPORT_SYMBOL(mali_put_ump_secure_id);
 
 int mali_platform_init_impl(void *data);
 int mali_platform_deinit_impl(void *data);
@@ -168,8 +172,10 @@ int mali_pmu_power_up(unsigned int msk)
 
 	msleep_interruptible(10);
 
-	if (timeout == 0)
+	if (timeout == 0) {
+		printk("mali pmu power up failure\n");
 		return -1;
+	}
 
 	return 0;
 }
@@ -216,8 +222,10 @@ int mali_pmu_power_down(unsigned int msk)
 
 	msleep_interruptible(10);
 
-	if (timeout == 0)
+	if (timeout == 0) {
+		printk("mali pmu power down failure\n");
 		return -1;
+	}
 
 	return 0;
 }
@@ -485,6 +493,7 @@ static int __init mali_init(void)
 {
 	unsigned long smem_start;
 	unsigned long smem_len;
+	int err = 0;
 
 	spin_lock_init(&mali_spinlock);
 
@@ -503,6 +512,8 @@ static int __init mali_init(void)
 	mali_set_mem_validation_size(0);
 
 	mali_ump_secure_id = (unsigned int) -1;
+	mali_get_ump_secure_id = NULL;
+	mali_put_ump_secure_id = NULL;
 
 	if (!mali_param.enabled)
 		return -1;
@@ -510,16 +521,23 @@ static int __init mali_init(void)
 	mali_enable_power(1);
 	mali_enable_clock(1);
 
+	/* Wait for power stable */
+	msleep_interruptible(1);
+
 	/* Verify Mali-400 PMU */
-	mali_pmu_power_up(0x2);
-	mali_pmu_power_up(0x7);
-	mali_show_info();
+	err += mali_pmu_power_down(0x7);
+	if (!err)
+		err += mali_pmu_power_up(0x2);
+	if (!err)
+		err += mali_pmu_power_up(0x7);
+	if (!err)
+		mali_show_info();
 #ifndef MALI_ALWAYS_ON
-	mali_pmu_power_down(0x5);
-	mali_pmu_power_down(0x7);
+	err += mali_pmu_power_down(0x5);
+	err += mali_pmu_power_down(0x7);
 #endif /* MALI_ALWAYS_ON */
 
-	return 0;
+	return err;
 }
 
 static void __exit mali_exit(void)

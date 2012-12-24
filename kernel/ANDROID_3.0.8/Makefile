@@ -357,10 +357,11 @@ CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
 
 # Use LINUXINCLUDE when you must reference the include/ directory.
 # Needed to be compatible with the O= option
+KERNELPATH      := $(shell pwd)
 LINUXINCLUDE    := -I$(srctree)/arch/$(hdr-arch)/include \
-                   -Iarch/$(hdr-arch)/include/generated -Iinclude \
-                   $(if $(KBUILD_SRC), -I$(srctree)/include) \
-                   -include include/generated/autoconf.h
+                   -I$(KERNELPATH)/arch/$(hdr-arch)/include/generated -I$(KERNELPATH)/include \
+                   $(if $(KBUILD_SRC), -I$(KERNELPATH)/$(srctree)/include) \
+                   -include $(KERNELPATH)/include/generated/autoconf.h
 
 KBUILD_CPPFLAGS := -D__KERNEL__
 

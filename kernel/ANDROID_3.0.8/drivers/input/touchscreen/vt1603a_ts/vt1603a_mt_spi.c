@@ -497,7 +497,7 @@ void vt1603_ts_report_penup(struct vt1603_ts_drvdata *ts_drv)
         return ;
 
     input_report_key(ts_drv->input, BTN_TOUCH, 0);
-    input_report_abs(ts_drv->input, ABS_MT_TOUCH_MAJOR, 0);
+    //input_report_abs(ts_drv->input, ABS_MT_TOUCH_MAJOR, 0);
     input_mt_sync(ts_drv->input);
     input_sync(ts_drv->input);
 }
@@ -587,7 +587,7 @@ void vt1603_ts_report_pos(struct vt1603_ts_drvdata *ts_drv,
     input_report_key(ts_drv->input, BTN_TOUCH, 1);
     input_report_abs(ts_drv->input, ABS_MT_POSITION_X, p.xpos);
     input_report_abs(ts_drv->input, ABS_MT_POSITION_Y, p.ypos);
-    input_report_abs(ts_drv->input, ABS_MT_TOUCH_MAJOR, 15);
+    //input_report_abs(ts_drv->input, ABS_MT_TOUCH_MAJOR, 15);
     input_mt_sync(ts_drv->input);
     input_sync(ts_drv->input);
 }
@@ -863,15 +863,19 @@ static int vt1603_ts_input_dev_init(struct vt1603_ts_drvdata * ts_drv)
 	set_bit(EV_KEY, ts_drv->input->evbit);
 	set_bit(EV_ABS, ts_drv->input->evbit);
 	set_bit(BTN_TOUCH, ts_drv->input->keybit);
+    set_bit(INPUT_PROP_DIRECT, ts_drv->input->propbit);
+
+#if 0
     input_set_abs_params(ts_drv->input, ABS_X, 0,
                               vt1603_ts_get_resolvX(), 2, 0);
     input_set_abs_params(ts_drv->input, ABS_Y, 0,
                               vt1603_ts_get_resolvY(), 2, 0);
+#endif
     input_set_abs_params(ts_drv->input, ABS_MT_POSITION_X, 0,
                               vt1603_ts_get_resolvX(), 2, 0);
     input_set_abs_params(ts_drv->input, ABS_MT_POSITION_Y, 0,
                               vt1603_ts_get_resolvY(), 2, 0);
-    input_set_abs_params(ts_drv->input, ABS_MT_TOUCH_MAJOR, 0, 15, 0, 0);
+//    input_set_abs_params(ts_drv->input, ABS_MT_TOUCH_MAJOR, 0, 15, 0, 0);
     input_register_device(ts_drv->input);
 
     return 0;

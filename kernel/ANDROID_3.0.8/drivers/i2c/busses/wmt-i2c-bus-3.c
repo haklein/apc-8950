@@ -74,10 +74,11 @@ struct wmt_i2c_s {
 
 static int i2c_wmt_wait_bus_not_busy(void);
 extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
-static unsigned int speed_mode = 0;
+static unsigned int speed_mode = 1;
 static unsigned int is_master = 1;/*master:1, slave:0*/
 unsigned int wmt_i2c3_is_master = 1;
 unsigned int wmt_i2c3_speed_mode = 0;
+static unsigned int wmt_i2c3_power_state = 0;/*0:power on, 1:suspend, 2:shutdown*/
 EXPORT_SYMBOL(wmt_i2c3_is_master);
 
 /**/
@@ -144,6 +145,10 @@ static int i2c_send_request(
 
 	if (slave_addr == WMT_I2C_API_I2C_ADDR)
 		return ret ;
+	if (wmt_i2c3_power_state == 2) {
+		printk("I2C3 has been shutdown\n");
+		return -EIO;
+	}
 
 	i2c.isr_nack    	= 0 ;
 	i2c.isr_byte_end	= 0 ;
@@ -1022,6 +1027,19 @@ static struct i2c_adapter i2c_wmt_ops = {
 
 #ifdef CONFIG_PM
 static struct i2c_regs_s wmt_i2c_reg ;
+static void i2c_shutdown(void)
+{
+	printk("i2c3 shutdown\n");
+	wmt_i2c3_power_state = 2;
+	while (!list_empty(&wmt_i2c_fifohead))
+		msleep(1);
+	while (1) {/*wait busy clear*/
+		if ((REG16_VAL(I2C3_CSR_ADDR) & I2C_STATUS_MASK) == I2C_READY)
+			break ;
+		msleep(1);
+	}
+	return;
+}
 static int i2c_suspend(void)
 {
 	printk("i2c3 suspennd\n");
@@ -1036,6 +1054,7 @@ static void i2c_resume(void)
 	GPIO_CTRL_GP21_I2C_BYTE_VAL &= ~(BIT6 | BIT7);
 	GPIO_PULL_EN_GP21_I2C_BYTE_VAL |= (BIT6 | BIT7);
 	GPIO_PULL_CTRL_GP21_I2C_BYTE_VAL |= (BIT6 | BIT7);
+	GPIO_PIN_SHARING_SEL_4BYTE_VAL &= ~BIT28;
 	auto_pll_divisor(DEV_I2C3, CLK_ENABLE, 0, 0);
 	auto_pll_divisor(DEV_I2C3, SET_DIV, 2, 20);/*20M Hz*/
 
@@ -1047,6 +1066,7 @@ static void i2c_resume(void)
 #else
 #define i2c_suspend NULL
 #define i2c_resume  NULL
+#define i2c_shutdown NULL
 #endif
 extern int wmt_i2c_add_bus(struct i2c_adapter *);
 extern int wmt_i2c_del_bus(struct i2c_adapter *);
@@ -1054,6 +1074,7 @@ extern int wmt_i2c_del_bus(struct i2c_adapter *);
 static struct syscore_ops wmt_i2c_syscore_ops = {
 	.suspend	= i2c_suspend,
 	.resume		= i2c_resume,
+	.shutdown	= i2c_shutdown,
 };
 
 static int __init i2c_adap_wmt_init(void)
@@ -1142,6 +1163,7 @@ static int __init i2c_adap_wmt_init(void)
 		*(volatile unsigned char *)CTRL_GPIO21 &= ~(BIT6 | BIT7);
 		*(volatile unsigned char *)PU_EN_GPIO21 |= (BIT6 | BIT7);
 		*(volatile unsigned char *)PU_CTRL_GPIO21 |= (BIT6 | BIT7);
+		GPIO_PIN_SHARING_SEL_4BYTE_VAL &= ~BIT28;
 		i2c.regs->cr_reg  = 0 ;
 		i2c.regs->div_reg = APB_96M_I2C_DIV ;
 		i2c.regs->isr_reg = I2C_ISR_ALL_WRITE_CLEAR ;   /* 0x0007*/

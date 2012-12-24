@@ -96,7 +96,7 @@ static struct uid_stat *create_stat(uid_t uid) {
 	struct proc_dir_entry *entry;
 
 	/* Create the uid stat struct and append it to the list. */
-	if ((new_uid = kmalloc(sizeof(struct uid_stat), GFP_KERNEL)) == NULL)
+	if ((new_uid = kmalloc(sizeof(struct uid_stat), GFP_ATOMIC)) == NULL)
 		return NULL;
 
 	new_uid->uid = uid;
